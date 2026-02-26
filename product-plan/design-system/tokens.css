@@ -1,0 +1,18 @@
+/* Design Tokens for Watchdog */
+
+:root {
+  /* Colors — Tailwind palette names */
+  --color-primary: sky;       /* sky-50 through sky-950 */
+  --color-secondary: amber;   /* amber-50 through amber-950 */
+  --color-neutral: zinc;      /* zinc-50 through zinc-950 */
+
+  /* Additional semantic colors used in the design */
+  --color-success: emerald;   /* Done/success status */
+  --color-progress: violet;   /* In-progress status */
+  --color-danger: red;        /* Overdue, errors, destructive actions */
+
+  /* Typography */
+  --font-heading: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}

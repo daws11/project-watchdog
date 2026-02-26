@@ -1,0 +1,192 @@
+{
+  "_meta": {
+    "models": {
+      "ProcessingRule": "A configured rule that defines when and how the AI pipeline processes ingested data. Combines a trigger schedule, source channels, an AI prompt template, and a target action.",
+      "ProcessingRun": "A record of a single execution of a processing rule. Captures timing, statistics, and any errors for audit and debugging.",
+      "RunError": "An error encountered during a processing run, with a message and optional context about which message or entity caused it."
+    },
+    "relationships": [
+      "ProcessingRule has many ProcessingRun",
+      "ProcessingRun belongs to ProcessingRule via ruleId",
+      "ProcessingRun contains zero or more RunError entries"
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_01",
+      "name": "Task Extraction — All Channels",
+      "description": "Process all incoming messages across WhatsApp, Email, and Webhook to extract actionable tasks and assign them to identified users.",
+      "schedule": "every 6 hours",
+      "channelIds": ["ch_whatsapp", "ch_email", "ch_webhook"],
+      "channelNames": ["WhatsApp", "Email", "Webhook"],
+      "prompt": "Analyze the following messages and extract any actionable tasks. For each task, identify: title, summary, priority (high/medium/low), assigned person, due date if mentioned, and confidence score. Link each task back to the source message.",
+      "action": "extract_tasks",
+      "enabled": true,
+      "lastRunAt": "2026-02-25T06:00:00Z",
+      "lastRunStatus": "success",
+      "createdAt": "2025-11-01T08:00:00Z"
+    },
+    {
+      "id": "rule_02",
+      "name": "Profile Update — Meeting Notes",
+      "description": "After each Google Meet sync, analyze transcripts to update user profiles with mentioned responsibilities, project assignments, and role changes.",
+      "schedule": "every 2 hours",
+      "channelIds": ["ch_google_meet"],
+      "channelNames": ["Google Meet"],
+      "prompt": "Review these meeting transcripts and identify any changes to team members' roles, responsibilities, or project assignments. Update the relevant user profiles with new information. Flag any contradictions with existing profile data.",
+      "action": "update_profiles",
+      "enabled": true,
+      "lastRunAt": "2026-02-25T04:00:00Z",
+      "lastRunStatus": "success",
+      "createdAt": "2026-01-15T10:00:00Z"
+    },
+    {
+      "id": "rule_03",
+      "name": "Full Pipeline — Daily",
+      "description": "Comprehensive daily processing: extract tasks, resolve identities, and update profiles across all connected sources.",
+      "schedule": "daily at 06:00",
+      "channelIds": ["ch_whatsapp", "ch_google_meet", "ch_email", "ch_webhook"],
+      "channelNames": ["WhatsApp", "Google Meet", "Email", "Webhook"],
+      "prompt": "Perform a comprehensive analysis of all new messages since the last run. Extract tasks, resolve person identities (match aliases to known users), update user profiles with new context, and flag any anomalies or conflicts.",
+      "action": "both",
+      "enabled": true,
+      "lastRunAt": "2026-02-25T06:00:00Z",
+      "lastRunStatus": "partial",
+      "createdAt": "2025-10-15T08:00:00Z"
+    },
+    {
+      "id": "rule_04",
+      "name": "Safety Incident Triage",
+      "description": "Process safety-related webhook reports and escalate to task extraction with high priority flagging.",
+      "schedule": "every 1 hour",
+      "channelIds": ["ch_webhook"],
+      "channelNames": ["Webhook"],
+      "prompt": "Analyze incoming safety incident reports. Extract immediate action items as high-priority tasks. Identify responsible personnel and flag any reports that require urgent management attention.",
+      "action": "extract_tasks",
+      "enabled": false,
+      "lastRunAt": "2026-02-20T12:00:00Z",
+      "lastRunStatus": "success",
+      "createdAt": "2026-02-01T14:00:00Z"
+    }
+  ],
+  "runs": [
+    {
+      "id": "run_01",
+      "ruleId": "rule_03",
+      "ruleName": "Full Pipeline — Daily",
+      "startedAt": "2026-02-25T06:00:00Z",
+      "duration": 142,
+      "status": "partial",
+      "messagesProcessed": 87,
+      "tasksExtracted": 14,
+      "identitiesResolved": 3,
+      "profilesUpdated": 6,
+      "errors": [
+        {
+          "message": "Failed to resolve identity for sender '+971507771234' — multiple candidate matches (Big Mike, usr_04 vs unknown_03). Skipped profile update.",
+          "context": "Identity resolution"
+        }
+      ]
+    },
+    {
+      "id": "run_02",
+      "ruleId": "rule_01",
+      "ruleName": "Task Extraction — All Channels",
+      "startedAt": "2026-02-25T06:00:00Z",
+      "duration": 98,
+      "status": "success",
+      "messagesProcessed": 52,
+      "tasksExtracted": 8,
+      "identitiesResolved": 0,
+      "profilesUpdated": 0,
+      "errors": []
+    },
+    {
+      "id": "run_03",
+      "ruleId": "rule_02",
+      "ruleName": "Profile Update — Meeting Notes",
+      "startedAt": "2026-02-25T04:00:00Z",
+      "duration": 34,
+      "status": "success",
+      "messagesProcessed": 12,
+      "tasksExtracted": 0,
+      "identitiesResolved": 0,
+      "profilesUpdated": 4,
+      "errors": []
+    },
+    {
+      "id": "run_04",
+      "ruleId": "rule_03",
+      "ruleName": "Full Pipeline — Daily",
+      "startedAt": "2026-02-24T06:00:00Z",
+      "duration": 156,
+      "status": "success",
+      "messagesProcessed": 103,
+      "tasksExtracted": 19,
+      "identitiesResolved": 5,
+      "profilesUpdated": 8,
+      "errors": []
+    },
+    {
+      "id": "run_05",
+      "ruleId": "rule_01",
+      "ruleName": "Task Extraction — All Channels",
+      "startedAt": "2026-02-24T18:00:00Z",
+      "duration": 112,
+      "status": "success",
+      "messagesProcessed": 41,
+      "tasksExtracted": 6,
+      "identitiesResolved": 0,
+      "profilesUpdated": 0,
+      "errors": []
+    },
+    {
+      "id": "run_06",
+      "ruleId": "rule_03",
+      "ruleName": "Full Pipeline — Daily",
+      "startedAt": "2026-02-23T06:00:00Z",
+      "duration": 201,
+      "status": "failed",
+      "messagesProcessed": 45,
+      "tasksExtracted": 7,
+      "identitiesResolved": 1,
+      "profilesUpdated": 0,
+      "errors": [
+        {
+          "message": "Rate limit exceeded on AI model API after processing 45 messages. Retry scheduled for next run.",
+          "context": "API call"
+        },
+        {
+          "message": "Profile update batch aborted due to upstream failure. 3 pending updates rolled back.",
+          "context": "Profile update"
+        }
+      ]
+    },
+    {
+      "id": "run_07",
+      "ruleId": "rule_02",
+      "ruleName": "Profile Update — Meeting Notes",
+      "startedAt": "2026-02-24T14:30:00Z",
+      "duration": 28,
+      "status": "success",
+      "messagesProcessed": 8,
+      "tasksExtracted": 0,
+      "identitiesResolved": 0,
+      "profilesUpdated": 2,
+      "errors": []
+    },
+    {
+      "id": "run_08",
+      "ruleId": "rule_04",
+      "ruleName": "Safety Incident Triage",
+      "startedAt": "2026-02-20T12:00:00Z",
+      "duration": 15,
+      "status": "success",
+      "messagesProcessed": 3,
+      "tasksExtracted": 2,
+      "identitiesResolved": 0,
+      "profilesUpdated": 0,
+      "errors": []
+    }
+  ]
+}

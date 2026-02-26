@@ -1,0 +1,140 @@
+{
+  "_meta": {
+    "models": {
+      "Channel": "A supported data ingestion channel type (WhatsApp, Google Meet, Email, Webhook). Each channel can have multiple connections.",
+      "Connection": "A single configured connection within a channel — e.g., one WhatsApp group, one email inbox, or one webhook endpoint. Tracks status, last sync time, and configuration details."
+    },
+    "relationships": [
+      "Channel has many Connection",
+      "Connection belongs to Channel via channelId"
+    ]
+  },
+  "channels": [
+    {
+      "id": "ch_whatsapp",
+      "name": "WhatsApp",
+      "type": "whatsapp",
+      "description": "Import conversations from WhatsApp group exports",
+      "connectionCount": 3,
+      "activeCount": 2,
+      "hasErrors": false
+    },
+    {
+      "id": "ch_google_meet",
+      "name": "Google Meet",
+      "type": "google_meet",
+      "description": "Capture action items from meeting transcripts",
+      "connectionCount": 1,
+      "activeCount": 1,
+      "hasErrors": false
+    },
+    {
+      "id": "ch_email",
+      "name": "Email",
+      "type": "email",
+      "description": "Monitor email inboxes for task-related communication",
+      "connectionCount": 2,
+      "activeCount": 1,
+      "hasErrors": true
+    },
+    {
+      "id": "ch_webhook",
+      "name": "Webhook",
+      "type": "webhook",
+      "description": "Receive data via incoming webhook endpoints",
+      "connectionCount": 2,
+      "activeCount": 2,
+      "hasErrors": false
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_01",
+      "channelId": "ch_whatsapp",
+      "label": "MEP Group",
+      "identifier": "+971501234567",
+      "status": "active",
+      "lastSyncAt": "2026-02-25T06:00:00Z",
+      "messagesProcessed": 1247,
+      "error": null,
+      "createdAt": "2025-11-15T09:00:00Z"
+    },
+    {
+      "id": "conn_02",
+      "channelId": "ch_whatsapp",
+      "label": "Site B Group",
+      "identifier": "+971501234567",
+      "status": "active",
+      "lastSyncAt": "2026-02-25T06:00:00Z",
+      "messagesProcessed": 843,
+      "error": null,
+      "createdAt": "2025-12-01T10:00:00Z"
+    },
+    {
+      "id": "conn_03",
+      "channelId": "ch_whatsapp",
+      "label": "HSE Channel",
+      "identifier": "+971501234567",
+      "status": "paused",
+      "lastSyncAt": "2026-02-20T06:00:00Z",
+      "messagesProcessed": 312,
+      "error": null,
+      "createdAt": "2026-01-10T08:00:00Z"
+    },
+    {
+      "id": "conn_04",
+      "channelId": "ch_google_meet",
+      "label": "Weekly Ops Sync",
+      "identifier": "ops-team@darvesh-group.ae",
+      "status": "active",
+      "lastSyncAt": "2026-02-24T14:30:00Z",
+      "messagesProcessed": 89,
+      "error": null,
+      "createdAt": "2026-01-20T11:00:00Z"
+    },
+    {
+      "id": "conn_05",
+      "channelId": "ch_email",
+      "label": "Operations Inbox",
+      "identifier": "ops@darvesh-group.ae",
+      "status": "active",
+      "lastSyncAt": "2026-02-25T05:45:00Z",
+      "messagesProcessed": 2156,
+      "error": null,
+      "createdAt": "2025-10-01T08:00:00Z"
+    },
+    {
+      "id": "conn_06",
+      "channelId": "ch_email",
+      "label": "Procurement Inbox",
+      "identifier": "procurement@darvesh-group.ae",
+      "status": "error",
+      "lastSyncAt": "2026-02-23T06:00:00Z",
+      "messagesProcessed": 678,
+      "error": "IMAP authentication failed — password may have been changed or app password revoked. Re-authenticate to resume syncing.",
+      "createdAt": "2025-11-05T09:00:00Z"
+    },
+    {
+      "id": "conn_07",
+      "channelId": "ch_webhook",
+      "label": "ERP Task Feed",
+      "identifier": "https://api.watchdog.ae/hooks/erp-tasks-a1b2c3",
+      "status": "active",
+      "lastSyncAt": "2026-02-25T06:12:00Z",
+      "messagesProcessed": 534,
+      "error": null,
+      "createdAt": "2026-01-05T14:00:00Z"
+    },
+    {
+      "id": "conn_08",
+      "channelId": "ch_webhook",
+      "label": "Safety Incident Reports",
+      "identifier": "https://api.watchdog.ae/hooks/safety-d4e5f6",
+      "status": "active",
+      "lastSyncAt": "2026-02-25T04:30:00Z",
+      "messagesProcessed": 47,
+      "error": null,
+      "createdAt": "2026-02-01T10:00:00Z"
+    }
+  ]
+}

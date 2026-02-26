@@ -1,0 +1,279 @@
+{
+  "_meta": {
+    "models": {
+      "PersonSummary": "A pre-aggregated view of a User for the People list. Combines identity info with task statistics computed during nightly processing. Task load (above/average/below) is computed client-side by comparing each person's total tasks to the team average ±10%.",
+      "TaskCounts": "Breakdown of a user's active tasks by priority level, plus overdue count and total.",
+      "Task": "A structured action item extracted by the AI pipeline from raw messages. Assigned to a user with priority, status, confidence score, and source traceability.",
+      "TaskMessage": "A raw message from a communication source (WhatsApp, email) linked to a task. Includes the original message that generated the task and follow-up messages with person references.",
+      "Alias": "An alternative identifier (nickname, secondary phone, alternate email) linked to a user profile."
+    },
+    "relationships": [
+      "PersonSummary contains one TaskCounts object (pre-aggregated)",
+      "PersonSummary contains zero or more Alias entries",
+      "PersonSummary derives from User + Task aggregation",
+      "Task belongs to PersonSummary via userId",
+      "TaskMessage belongs to Task via taskId",
+      "TaskMessage contains zero or more PersonReference entries"
+    ]
+  },
+  "messages": [
+    { "id": "msg_01", "taskId": "tsk_14", "content": "The main distribution panel on Level 2 tripped again. HVAC and half the lights are out on the east side. @Dmitri can you check this first thing tomorrow?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-23T14:30:00Z", "source": "MEP Group", "isOriginal": true, "personReferences": [{ "name": "Dmitri", "personId": "usr_07" }] },
+    { "id": "msg_02", "taskId": "tsk_14", "content": "Yes I'll be there at 7am. Might need Raj's team to keep clear of the electrical room while I work on it.", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-23T14:45:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [{ "name": "Raj", "personId": "usr_02" }] },
+    { "id": "msg_03", "taskId": "tsk_14", "content": "Got it, I'll tell my guys to stay off Level 2 electrical room tomorrow morning. Let me know when it's safe.", "sender": "Raj Mehta", "senderId": "usr_02", "timestamp": "2026-02-23T15:10:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [] },
+    { "id": "msg_04", "taskId": "tsk_14", "content": "Update: opened the panel, found a burned contact on the 200A main. Need to order a replacement. Temporary bypass is holding for now.", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-24T08:15:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [] },
+
+    { "id": "msg_05", "taskId": "tsk_15", "content": "IT team is asking when the server room power infrastructure will be ready. They have racks arriving next week and need conduit done before that.", "sender": "Priya Nair", "senderId": "usr_09", "timestamp": "2026-02-22T09:00:00Z", "source": "MEP Group", "isOriginal": true, "personReferences": [] },
+    { "id": "msg_06", "taskId": "tsk_15", "content": "Dima, what's the status on server room conduit? Can we get this done by Thursday?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-22T10:30:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [{ "name": "Dima", "personId": "usr_07" }] },
+    { "id": "msg_07", "taskId": "tsk_15", "content": "We're short on 50mm conduit. Sandra, can you check if the supplier has stock? I need about 80 meters.", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-22T11:00:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [{ "name": "Sandra", "personId": "usr_03" }] },
+
+    { "id": "msg_08", "taskId": "tsk_16", "content": "Reminder: compliance audit is scheduled for next Wednesday. ALL emergency lighting must be tested and documented before then. @Dmitri please coordinate.", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-21T08:00:00Z", "source": "HSE Channel", "isOriginal": true, "personReferences": [{ "name": "Dmitri", "personId": "usr_07" }] },
+    { "id": "msg_09", "taskId": "tsk_16", "content": "I'll start testing Level 1 and 2 tomorrow. Will need Yusuf to help with the stairwell units — some are mounted high.", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-21T08:30:00Z", "source": "HSE Channel", "isOriginal": false, "personReferences": [{ "name": "Yusuf", "personId": "usr_05" }] },
+    { "id": "msg_10", "taskId": "tsk_16", "content": "Yusuf is on fleet rotation this week. Can Big Mike's crew assist instead?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-21T09:15:00Z", "source": "HSE Channel", "isOriginal": false, "personReferences": [{ "name": "Yusuf", "personId": "usr_05" }, { "name": "Big Mike", "personId": "usr_04" }] },
+
+    { "id": "msg_11", "taskId": "tsk_17", "content": "The design consultant is requesting updated as-built drawings for Level 1 and 2 electrical. Need them by Friday at the latest for their review cycle.", "sender": "Priya Nair", "senderId": "usr_09", "timestamp": "2026-02-24T07:00:00Z", "source": "Design Group", "isOriginal": true, "personReferences": [] },
+    { "id": "msg_12", "taskId": "tsk_17", "content": "Dmitri, can you get the Level 1 and 2 drawings updated? The redlines from last month should cover most of it.", "sender": "Priya Nair", "senderId": "usr_09", "timestamp": "2026-02-24T07:05:00Z", "source": "Design Group", "isOriginal": false, "personReferences": [{ "name": "Dmitri", "personId": "usr_07" }] },
+    { "id": "msg_13", "taskId": "tsk_17", "content": "I'll work on Level 1 tomorrow and Level 2 on Wednesday. Will send both to Chen Wei for QS verification before submitting.", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-24T10:00:00Z", "source": "Design Group", "isOriginal": false, "personReferences": [{ "name": "Chen Wei", "personId": "usr_08" }] },
+
+    { "id": "msg_14", "taskId": "tsk_18", "content": "We have a schedule conflict on the shared MEP shaft between Level 3 and 4. Plumbing needs access same day as our cable pull. Can we coordinate?", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-25T06:30:00Z", "source": "MEP Group", "isOriginal": true, "personReferences": [] },
+    { "id": "msg_15", "taskId": "tsk_18", "content": "Plumbing team says they can shift to afternoon if electrical goes in the morning. Raj, will your crew need the shaft too?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-25T07:00:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [{ "name": "Raj", "personId": "usr_02" }] },
+
+    { "id": "msg_16", "taskId": "tsk_19", "content": "We need 2 spare 100A breakers for the panel upgrade on Level 2. Sandra, can you add these to the next procurement batch?", "sender": "Dmitri Volkov", "senderId": "usr_07", "timestamp": "2026-02-24T11:00:00Z", "source": "MEP Group", "isOriginal": true, "personReferences": [{ "name": "Sandra", "personId": "usr_03" }] },
+    { "id": "msg_17", "taskId": "tsk_19", "content": "Added to the order. Supplier says 3-4 day lead time. Should arrive by end of next week.", "sender": "Sandra Oliveira", "senderId": "usr_03", "timestamp": "2026-02-24T14:00:00Z", "source": "MEP Group", "isOriginal": false, "personReferences": [] },
+
+    { "id": "msg_18", "taskId": "tsk_02", "content": "Just got a call from the municipality — they've flagged Site B for a missing fire safety certificate. We need to sort this ASAP or they'll halt work.", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-22T09:00:00Z", "source": "Operations Group", "isOriginal": true, "personReferences": [] },
+    { "id": "msg_19", "taskId": "tsk_02", "content": "I'll reach out to the compliance team today. Aisha, do you have the contact for the fire safety inspector?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-22T09:15:00Z", "source": "Operations Group", "isOriginal": false, "personReferences": [{ "name": "Aisha", "personId": "usr_06" }] },
+    { "id": "msg_20", "taskId": "tsk_02", "content": "Yes, I'll send you his details now. He was responsive last time.", "sender": "Aisha Bello", "senderId": "usr_06", "timestamp": "2026-02-22T09:30:00Z", "source": "Operations Group", "isOriginal": false, "personReferences": [] },
+    { "id": "msg_21", "taskId": "tsk_02", "content": "Dmitri, the fire safety cert issue is partly about the electrical signoff on Level 2. Can you prep the inspection docs?", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-22T11:00:00Z", "source": "Operations Group", "isOriginal": false, "personReferences": [{ "name": "Dmitri", "personId": "usr_07" }] },
+
+    { "id": "msg_22", "taskId": "tsk_05", "content": "After Monday's incident report we need to distribute the updated HSE guidelines to all site leads immediately. This is urgent.", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-21T07:00:00Z", "source": "HSE Channel", "isOriginal": true, "personReferences": [] },
+    { "id": "msg_23", "taskId": "tsk_05", "content": "Raj, Dmitri — make sure your teams get the updated safety briefing. New protocols for working at heights and electrical isolation.", "sender": "Fatima Al-Rashid", "senderId": "usr_01", "timestamp": "2026-02-21T07:15:00Z", "source": "HSE Channel", "isOriginal": false, "personReferences": [{ "name": "Raj", "personId": "usr_02" }, { "name": "Dmitri", "personId": "usr_07" }] },
+
+    { "id": "msg_24", "taskId": "tsk_11", "content": "Ready-mix plant needs 48 hours notice for the Thursday pour. Raj, have you submitted the schedule yet?", "sender": "Sandra Oliveira", "senderId": "usr_03", "timestamp": "2026-02-24T08:00:00Z", "source": "Site B Group", "isOriginal": true, "personReferences": [{ "name": "Raj", "personId": "usr_02" }] },
+    { "id": "msg_25", "taskId": "tsk_11", "content": "Working on it now. Fatima, we might need to adjust quantities — the revised structural calcs came in yesterday.", "sender": "Raj Mehta", "senderId": "usr_02", "timestamp": "2026-02-24T08:30:00Z", "source": "Site B Group", "isOriginal": false, "personReferences": [{ "name": "Fatima", "personId": "usr_01" }] }
+  ],
+  "tasks": [
+    { "id": "tsk_01", "userId": "usr_01", "title": "Finalize Q1 logistics budget", "summary": "Review and approve the logistics cost breakdown shared in the Operations WhatsApp group", "priority": "high", "status": "open", "dueDate": "2026-02-26", "confidence": 0.92, "sourceReference": "Operations Group · Feb 23", "createdAt": "2026-02-23T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_02", "userId": "usr_01", "title": "Resolve Site B permit escalation", "summary": "Municipality flagged missing fire safety cert. Fatima mentioned she'd handle it with compliance", "priority": "high", "status": "in_progress", "dueDate": "2026-02-24", "confidence": 0.88, "sourceReference": "Operations Group · Feb 22", "createdAt": "2026-02-22T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_03", "userId": "usr_01", "title": "Coordinate fleet reallocation for March", "summary": "Discussed moving 3 vehicles from Site A to Site C due to project ramp-up", "priority": "high", "status": "open", "dueDate": "2026-03-01", "confidence": 0.85, "sourceReference": "Logistics Thread · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_04", "userId": "usr_01", "title": "Review subcontractor invoices", "summary": "Three invoices pending approval from MEP subcontractor, mentioned by Dmitri", "priority": "high", "status": "open", "dueDate": "2026-02-27", "confidence": 0.79, "sourceReference": "Finance Group · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_05", "userId": "usr_01", "title": "Send updated safety protocol to site leads", "summary": "New HSE guidelines need distribution after Monday's incident report", "priority": "high", "status": "open", "dueDate": "2026-02-23", "confidence": 0.91, "sourceReference": "HSE Channel · Feb 21", "createdAt": "2026-02-21T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_06", "userId": "usr_01", "title": "Schedule weekly sync with project managers", "summary": "Recurring meeting setup mentioned in ops planning thread", "priority": "medium", "status": "open", "dueDate": null, "confidence": 0.72, "sourceReference": "Operations Group · Feb 25", "createdAt": "2026-02-25T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_07", "userId": "usr_01", "title": "Follow up on cement delivery delay", "summary": "Supplier confirmed 2-day delay, Fatima to coordinate workaround with site team", "priority": "medium", "status": "in_progress", "dueDate": "2026-02-26", "confidence": 0.83, "sourceReference": "Supply Chain Group · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_08", "userId": "usr_01", "title": "Update project timeline in shared tracker", "summary": "Minor adjustment needed after the permit delay on Site B", "priority": "medium", "status": "open", "dueDate": null, "confidence": 0.68, "sourceReference": "PM Group · Feb 23", "createdAt": "2026-02-23T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_09", "userId": "usr_01", "title": "Archive completed Site D documentation", "summary": "Project closed, docs need to be moved to completed folder", "priority": "low", "status": "open", "dueDate": null, "confidence": 0.65, "sourceReference": "Operations Group · Feb 20", "createdAt": "2026-02-20T06:00:00Z", "isOverdue": false },
+
+    { "id": "tsk_10", "userId": "usr_02", "title": "Fix formwork alignment on Level 3", "summary": "QC flagged 15mm deviation on east wing columns, Raj confirmed he'll re-check tomorrow", "priority": "high", "status": "open", "dueDate": "2026-02-26", "confidence": 0.94, "sourceReference": "Site B Group · Feb 25", "createdAt": "2026-02-25T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_11", "userId": "usr_02", "title": "Submit concrete pour schedule", "summary": "Ready-mix plant needs 48h notice, pour planned for Thursday", "priority": "high", "status": "in_progress", "dueDate": "2026-02-25", "confidence": 0.90, "sourceReference": "Site B Group · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_12", "userId": "usr_02", "title": "Order rebar for Level 4", "summary": "Procurement needs quantities by EOD for next batch", "priority": "high", "status": "open", "dueDate": "2026-02-27", "confidence": 0.87, "sourceReference": "Supply Chain Group · Feb 25", "createdAt": "2026-02-25T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_13", "userId": "usr_02", "title": "Attend safety briefing with subcontractors", "summary": "Mandatory briefing after incident on adjacent site", "priority": "medium", "status": "open", "dueDate": "2026-02-27", "confidence": 0.76, "sourceReference": "HSE Channel · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false },
+
+    { "id": "tsk_14", "userId": "usr_07", "title": "Repair main distribution panel on Level 2", "summary": "Tripped breaker affecting HVAC and lighting, Dmitri said he'll look at it first thing", "priority": "high", "status": "in_progress", "dueDate": "2026-02-24", "confidence": 0.95, "sourceReference": "MEP Group · Feb 23", "createdAt": "2026-02-23T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_15", "userId": "usr_07", "title": "Complete conduit installation for server room", "summary": "IT team waiting on power infrastructure before rack setup", "priority": "high", "status": "open", "dueDate": "2026-02-23", "confidence": 0.88, "sourceReference": "MEP Group · Feb 22", "createdAt": "2026-02-22T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_16", "userId": "usr_07", "title": "Test emergency lighting on all floors", "summary": "Compliance audit next week, all emergency lights must be verified", "priority": "high", "status": "open", "dueDate": "2026-02-22", "confidence": 0.91, "sourceReference": "HSE Channel · Feb 21", "createdAt": "2026-02-21T06:00:00Z", "isOverdue": true },
+    { "id": "tsk_17", "userId": "usr_07", "title": "Submit electrical as-built drawings", "summary": "Consultant needs updated drawings for Level 1 and 2 by Friday", "priority": "high", "status": "open", "dueDate": "2026-02-28", "confidence": 0.82, "sourceReference": "Design Group · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_18", "userId": "usr_07", "title": "Coordinate with plumbing team on shaft access", "summary": "Shared MEP shaft schedule conflict discussed in group", "priority": "medium", "status": "open", "dueDate": null, "confidence": 0.74, "sourceReference": "MEP Group · Feb 25", "createdAt": "2026-02-25T06:00:00Z", "isOverdue": false },
+    { "id": "tsk_19", "userId": "usr_07", "title": "Order replacement breakers", "summary": "2 spare 100A breakers needed for panel upgrade", "priority": "medium", "status": "open", "dueDate": "2026-03-01", "confidence": 0.70, "sourceReference": "MEP Group · Feb 24", "createdAt": "2026-02-24T06:00:00Z", "isOverdue": false }
+  ],
+  "people": [
+    {
+      "id": "usr_01",
+      "name": "Fatima Al-Rashid",
+      "phone": "+971501234567",
+      "email": "fatima@darvesh-group.ae",
+      "aliases": ["Fati", "FAR"],
+      "role": "Operations Manager",
+      "function": "Operations",
+      "identifiersLinked": 4,
+      "taskCounts": {
+        "high": 5,
+        "medium": 3,
+        "low": 1,
+        "overdue": 2,
+        "total": 9
+      },
+      "lastActivityAt": "2026-02-25T06:00:00Z",
+      "status": "active",
+      "goalStatus": "off_goal"
+    },
+    {
+      "id": "usr_02",
+      "name": "Raj Mehta",
+      "phone": "+971551234567",
+      "email": "raj.mehta@darvesh-group.ae",
+      "aliases": ["Raj"],
+      "role": "Site Supervisor",
+      "function": "Construction",
+      "identifiersLinked": 2,
+      "taskCounts": {
+        "high": 3,
+        "medium": 7,
+        "low": 2,
+        "overdue": 1,
+        "total": 12
+      },
+      "lastActivityAt": "2026-02-25T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    },
+    {
+      "id": "usr_03",
+      "name": "Sandra Oliveira",
+      "phone": "+971509876543",
+      "email": "sandra.o@darvesh-group.ae",
+      "aliases": [],
+      "role": "Procurement Lead",
+      "function": "Supply Chain",
+      "identifiersLinked": 2,
+      "taskCounts": {
+        "high": 1,
+        "medium": 4,
+        "low": 3,
+        "overdue": 0,
+        "total": 8
+      },
+      "lastActivityAt": "2026-02-24T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    },
+    {
+      "id": "usr_04",
+      "name": null,
+      "phone": "+971507771234",
+      "email": null,
+      "aliases": ["Big Mike"],
+      "role": null,
+      "function": null,
+      "identifiersLinked": 1,
+      "taskCounts": {
+        "high": 2,
+        "medium": 1,
+        "low": 0,
+        "overdue": 1,
+        "total": 3
+      },
+      "lastActivityAt": "2026-02-25T06:00:00Z",
+      "status": "active",
+      "goalStatus": "off_goal"
+    },
+    {
+      "id": "usr_05",
+      "name": "Yusuf Khan",
+      "phone": "+971504443210",
+      "email": "yusuf.k@darvesh-group.ae",
+      "aliases": ["YK", "Yusuf Logistics"],
+      "role": "Fleet Coordinator",
+      "function": "Logistics",
+      "identifiersLinked": 5,
+      "taskCounts": {
+        "high": 0,
+        "medium": 6,
+        "low": 4,
+        "overdue": 0,
+        "total": 10
+      },
+      "lastActivityAt": "2026-02-24T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    },
+    {
+      "id": "usr_06",
+      "name": "Aisha Bello",
+      "phone": "+971508889900",
+      "email": "aisha.b@darvesh-group.ae",
+      "aliases": ["Aisha"],
+      "role": "HR Coordinator",
+      "function": "Human Resources",
+      "identifiersLinked": 2,
+      "taskCounts": {
+        "high": 1,
+        "medium": 2,
+        "low": 5,
+        "overdue": 0,
+        "total": 8
+      },
+      "lastActivityAt": "2026-02-23T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    },
+    {
+      "id": "usr_07",
+      "name": "Dmitri Volkov",
+      "phone": "+971556667788",
+      "email": null,
+      "aliases": ["Dima"],
+      "role": "Electrician Foreman",
+      "function": "MEP",
+      "identifiersLinked": 3,
+      "taskCounts": {
+        "high": 4,
+        "medium": 2,
+        "low": 0,
+        "overdue": 3,
+        "total": 6
+      },
+      "lastActivityAt": "2026-02-25T06:00:00Z",
+      "status": "active",
+      "goalStatus": "off_goal"
+    },
+    {
+      "id": "usr_08",
+      "name": "Chen Wei",
+      "phone": "+971502223344",
+      "email": "chen.wei@darvesh-group.ae",
+      "aliases": [],
+      "role": "Quantity Surveyor",
+      "function": "Finance",
+      "identifiersLinked": 2,
+      "taskCounts": {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "overdue": 0,
+        "total": 0
+      },
+      "lastActivityAt": "2026-02-10T06:00:00Z",
+      "status": "dormant",
+      "goalStatus": "off_goal"
+    },
+    {
+      "id": "usr_09",
+      "name": "Priya Nair",
+      "phone": "+971559991122",
+      "email": "priya.nair@darvesh-group.ae",
+      "aliases": ["Priya PM"],
+      "role": "Project Manager",
+      "function": "Project Management",
+      "identifiersLinked": 3,
+      "taskCounts": {
+        "high": 2,
+        "medium": 8,
+        "low": 3,
+        "overdue": 0,
+        "total": 13
+      },
+      "lastActivityAt": "2026-02-25T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    },
+    {
+      "id": "usr_10",
+      "name": null,
+      "phone": "+971501112233",
+      "email": "unknown-sender@gmail.com",
+      "aliases": [],
+      "role": null,
+      "function": null,
+      "identifiersLinked": 1,
+      "taskCounts": {
+        "high": 0,
+        "medium": 1,
+        "low": 0,
+        "overdue": 0,
+        "total": 1
+      },
+      "lastActivityAt": "2026-02-20T06:00:00Z",
+      "status": "active",
+      "goalStatus": "on_goal"
+    }
+  ]
+}
