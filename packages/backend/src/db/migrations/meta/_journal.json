@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1772095510088,
+      "tag": "0000_lowly_quasar",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1772200000000,
+      "tag": "0001_happy_people_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772201000000,
+      "tag": "0002_bright_smtp_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772202000000,
+      "tag": "0003_wise_api_key_encryption",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1772443200000,
+      "tag": "0004_mellow_fonnte_groups",
+      "breakpoints": true
+    }
+  ]
+}

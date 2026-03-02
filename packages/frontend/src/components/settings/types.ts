@@ -10,7 +10,7 @@ export type UserStatus = 'active' | 'inactive'
 export type SmtpEncryption = 'none' | 'ssl' | 'starttls'
 
 /** Settings category for sidebar navigation */
-export type SettingsCategory = 'api_keys' | 'smtp' | 'users'
+export type SettingsCategory = 'api_keys' | 'smtp' | 'users' | 'whatsapp_groups'
 
 /** A configured API key for an external service */
 export interface ApiKey {
@@ -66,8 +66,30 @@ export interface UserFormData {
   name: string
   email: string
   role: UserRole
+  password?: string
   sectionPermissions: string[]
   assignedPeopleIds: string[]
+}
+
+/** A WhatsApp group fetched from Fonnte */
+export interface WhatsappGroup {
+  id: string
+  name: string
+  imported: boolean
+  connectionId: string | null
+}
+
+/** WhatsApp groups section state */
+export interface WhatsappGroupsState {
+  groups: WhatsappGroup[]
+  lastSyncedAt: string | null
+}
+
+/** Result of manual sync action */
+export interface WhatsappGroupsSyncResult extends WhatsappGroupsState {
+  fetchedCount: number
+  insertedConnections: number
+  skippedExisting: number
 }
 
 /** Props for the Settings view */
@@ -77,6 +99,8 @@ export interface SettingsProps {
   users: SystemUser[]
   availableSections: SectionOption[]
   availablePeople: PersonOption[]
+  whatsappGroups: WhatsappGroup[]
+  whatsappGroupsLastSyncedAt: string | null
 
   /** Called when user adds a new API key */
   onAddApiKey?: (data: ApiKeyFormData) => void
@@ -101,5 +125,8 @@ export interface SettingsProps {
 
   /** Called when user reactivates a system user */
   onReactivateUser?: (userId: string) => void
+
+  /** Called when user syncs WhatsApp group list from Fonnte */
+  onSyncWhatsappGroups?: () => Promise<WhatsappGroupsSyncResult | void>
 }
 

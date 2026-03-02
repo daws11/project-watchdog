@@ -1,31 +1,78 @@
 import cors from "cors";
 import express from "express";
 import { env } from "./config/env";
+import { initializeQueue } from "./queue";
+import { registerMessageProcessor } from "./workers/message-processor";
+import { registerProcessingRunner } from "./workers/processing-runner";
+import { registerTaskExtractor } from "./workers/task-extractor";
+import { registerRiskEngine } from "./workers/risk-engine";
+import { registerReportGenerator } from "./workers/report-generator";
+import { authenticate, authorizeSection, requireAdmin } from "./middleware/auth";
+import { validateFonnteWebhook } from "./middleware/webhook-auth";
+import { requestLogger } from "./middleware/request-logger";
+import { authRouter } from "./routes/auth";
 import { dashboardRouter } from "./routes/dashboard";
 import { healthRouter } from "./routes/health";
 import { peopleRouter } from "./routes/people";
 import { processingRouter } from "./routes/processing";
+import { reportsRouter } from "./routes/reports";
 import { settingsRouter } from "./routes/settings";
 import { sourcesRouter } from "./routes/sources";
 import { tasksRouter } from "./routes/tasks";
+import { fonnteWebhookRouter } from "./webhooks/fonnte";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-app.use("/api/dashboard", dashboardRouter);
+// Public routes (no auth required)
+app.use("/api/auth", authRouter);
 app.use("/api/health", healthRouter);
-app.use("/api/people", peopleRouter);
-app.use("/api/processing", processingRouter);
-app.use("/api/settings", settingsRouter);
-app.use("/api/sources", sourcesRouter);
-app.use("/api/tasks", tasksRouter);
+
+// Webhook routes (separate token-based auth)
+app.use("/webhooks/fonnte", validateFonnteWebhook, fonnteWebhookRouter);
+
+// Request logging (after auth, so we can log user)
+app.use(requestLogger);
+
+// Protected routes (JWT auth required)
+app.use("/api/dashboard", authenticate, authorizeSection("dashboard"), dashboardRouter);
+app.use("/api/people", authenticate, authorizeSection("people"), peopleRouter);
+app.use("/api/tasks", authenticate, authorizeSection("tasks"), tasksRouter);
+app.use("/api/sources", authenticate, authorizeSection("sources"), sourcesRouter);
+app.use("/api/processing", authenticate, authorizeSection("processing"), processingRouter);
+app.use("/api/reports", authenticate, authorizeSection("reports"), reportsRouter);
+
+// Admin-only routes
+app.use("/api/settings", authenticate, requireAdmin, settingsRouter);
 
 app.get("/", (_req, res) => {
   res.json({ message: "Project Watchdog API" });
 });
 
-app.listen(env.PORT, () => {
-  console.log(`backend listening on http://localhost:${env.PORT}`);
-});
+async function startServer() {
+  try {
+    // Initialize pg-boss queue
+    await initializeQueue();
+    console.log("[Server] Queue initialized");
+
+    // Register workers
+    await registerMessageProcessor();
+    await registerProcessingRunner();
+    await registerTaskExtractor();
+    await registerRiskEngine();
+    await registerReportGenerator();
+    console.log("[Server] Workers registered");
+
+    // Start Express server
+    app.listen(env.PORT, () => {
+      console.log(`[Server] Backend listening on http://localhost:${env.PORT}`);
+    });
+  } catch (error) {
+    console.error("[Server] Failed to start:", error);
+    process.exit(1);
+  }
+}
+
+startServer();

@@ -36,20 +36,20 @@ const ACTION_LABELS: Record<RuleAction, string> = {
 }
 
 const RUN_STATUS_CONFIG: Record<RunStatus, { label: string; className: string; Icon: ElementType }> = {
+  running: {
+    label: 'Running',
+    className:
+      'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/20',
+    Icon: Clock,
+  },
   success: {
     label: 'Success',
     className:
       'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20',
     Icon: CheckCircle2,
   },
-  partial: {
-    label: 'Partial',
-    className:
-      'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20',
-    Icon: AlertTriangle,
-  },
-  failed: {
-    label: 'Failed',
+  error: {
+    label: 'Error',
     className:
       'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20',
     Icon: XCircle,
@@ -71,10 +71,10 @@ const CHANNEL_COLOR: Record<string, string> = {
 }
 
 const ALL_CHANNELS = [
-  { id: 'ch_whatsapp', name: 'WhatsApp' },
-  { id: 'ch_google_meet', name: 'Google Meet' },
-  { id: 'ch_email', name: 'Email' },
-  { id: 'ch_webhook', name: 'Webhook' },
+  { id: 'whatsapp', name: 'WhatsApp' },
+  { id: 'google_meet', name: 'Google Meet' },
+  { id: 'email', name: 'Email' },
+  { id: 'webhook', name: 'Webhook' },
 ]
 
 function formatRelativeTime(isoString: string): string {
@@ -227,7 +227,7 @@ export function ProcessingView({
 
   const totalRuns = runs.length
   const successRuns = runs.filter((r) => r.status === 'success').length
-  const failedRuns = runs.filter((r) => r.status === 'failed').length
+  const failedRuns = runs.filter((r) => r.status === 'error').length
 
   const hasActiveRunFilters =
     runSearch.trim() !== '' ||
@@ -747,9 +747,9 @@ function RunHistoryTab({
           className="text-sm text-zinc-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-500/20 cursor-pointer shrink-0"
         >
           <option value="all">All statuses</option>
+          <option value="running">Running</option>
           <option value="success">Success</option>
-          <option value="partial">Partial</option>
-          <option value="failed">Failed</option>
+          <option value="error">Error</option>
         </select>
         <select
           value={runFilterAction}

@@ -4,7 +4,7 @@
 export type RuleAction = 'extract_tasks' | 'update_profiles' | 'both'
 
 /** Processing run status */
-export type RunStatus = 'success' | 'partial' | 'failed'
+export type RunStatus = 'running' | 'success' | 'error'
 
 /** A configured processing rule */
 export interface ProcessingRule {

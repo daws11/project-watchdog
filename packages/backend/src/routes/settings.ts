@@ -1,278 +1,685 @@
-import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { Router } from 'express'
+import { Router } from "express";
+import bcrypt from "bcrypt";
+import nodemailer from "nodemailer";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { db } from "../db";
+import {
+  apiKeys,
+  connections,
+  fonnteGroups,
+  projects,
+  smtpSettings as smtpSettingsTable,
+  tasks,
+  users,
+} from "../db/schema";
+import { encryptSecret } from "../utils/crypto";
+import { fonnteService } from "../services/fonnte";
 
-type UserRole = 'admin' | 'regular'
-type UserStatus = 'active' | 'inactive'
-type SmtpEncryption = 'none' | 'ssl' | 'starttls'
+type UserRole = "admin" | "regular";
+type UserStatus = "active" | "inactive";
+type SmtpEncryption = "none" | "ssl" | "starttls";
 
 interface ApiKey {
-  id: string
-  service: string
-  maskedKey: string
-  createdAt: string
-  lastUsedAt: string | null
+  id: string;
+  service: string;
+  maskedKey: string;
+  createdAt: string;
+  lastUsedAt: string | null;
 }
 
 interface SmtpSettings {
-  host: string
-  port: number
-  username: string
-  password: string
-  fromAddress: string
-  encryption: SmtpEncryption
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  fromAddress: string;
+  encryption: SmtpEncryption;
 }
 
 interface SystemUser {
-  id: string
-  name: string
-  email: string
-  role: UserRole
-  status: UserStatus
-  lastActiveAt: string
-  sectionPermissions: string[]
-  assignedPeopleIds: string[]
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+  lastActiveAt: string;
+  sectionPermissions: string[];
+  assignedPeopleIds: string[];
 }
 
 interface SectionOption {
-  id: string
-  label: string
+  id: string;
+  label: string;
 }
 
 interface PersonOption {
-  id: string
-  name: string
+  id: string;
+  name: string;
 }
 
 interface SettingsSnapshot {
-  apiKeys: ApiKey[]
-  smtpSettings: SmtpSettings
-  users: SystemUser[]
-  availableSections: SectionOption[]
-  availablePeople: PersonOption[]
+  apiKeys: ApiKey[];
+  smtpSettings: SmtpSettings;
+  users: SystemUser[];
+  availableSections: SectionOption[];
+  availablePeople: PersonOption[];
 }
 
 interface ApiKeyFormData {
-  service: string
-  key: string
+  service: string;
+  key: string;
 }
 
 interface UserFormData {
-  name: string
-  email: string
-  role: UserRole
-  sectionPermissions: string[]
-  assignedPeopleIds: string[]
+  name: string;
+  email: string;
+  role: UserRole;
+  password?: string;
+  sectionPermissions: string[];
+  assignedPeopleIds: string[];
 }
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-const samplePath = resolve(
-  __dirname,
-  '../../../../product-plan/sections/settings/sample-data.json',
-)
-const sampleData = JSON.parse(readFileSync(samplePath, 'utf-8')) as SettingsSnapshot
-
-let apiKeys: ApiKey[] = [...(sampleData.apiKeys ?? [])]
-let smtpSettings: SmtpSettings = sampleData.smtpSettings ?? {
-  host: '',
-  port: 587,
-  username: '',
-  password: '',
-  fromAddress: '',
-  encryption: 'starttls',
+interface WhatsappGroupItem {
+  id: string;
+  name: string;
+  imported: boolean;
+  connectionId: string | null;
 }
-let users: SystemUser[] = [...(sampleData.users ?? [])]
 
-const availableSections: SectionOption[] = [...(sampleData.availableSections ?? [])]
-const availablePeople: PersonOption[] = [...(sampleData.availablePeople ?? [])]
-
-function randomId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+interface WhatsappGroupsResponse {
+  groups: WhatsappGroupItem[];
+  lastSyncedAt: string | null;
 }
+const SALT_ROUNDS = 10;
+const SMTP_SETTINGS_ID = 1;
+
+const availableSections: SectionOption[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "people", label: "People" },
+  { id: "tasks", label: "Tasks" },
+  { id: "sources", label: "Sources" },
+  { id: "processing", label: "Processing" },
+  { id: "settings", label: "Settings" },
+  { id: "reports", label: "Reports" },
+];
 
 function maskKey(raw: string): string {
-  const key = raw.trim()
-  if (!key) return '****'
-  if (key.length <= 8) return '****'
-  const first = key.slice(0, Math.min(7, key.length))
-  const last = key.slice(-4)
-  return `${first}****...${last}`
+  const key = raw.trim();
+  if (!key) return "****";
+  if (key.length <= 8) return "****";
+  return `...${key.slice(-4)}`;
 }
 
-const router = Router()
+const router = Router();
+
+async function ensureDefaultProjectId(): Promise<number> {
+  let project = await db.query.projects.findFirst();
+  if (!project) {
+    const [newProject] = await db
+      .insert(projects)
+      .values({
+        name: "Default Project",
+        healthScore: 100,
+      })
+      .returning();
+    project = newProject;
+  }
+
+  return project.id;
+}
+
+async function getWhatsappGroupsView(): Promise<WhatsappGroupsResponse> {
+  const [dbGroups, whatsappConnections] = await Promise.all([
+    db.select().from(fonnteGroups).orderBy(fonnteGroups.name),
+    db
+      .select({
+        id: connections.id,
+        identifier: connections.identifier,
+      })
+      .from(connections)
+      .where(eq(connections.channelType, "whatsapp")),
+  ]);
+
+  const connectionByIdentifier = new Map(
+    whatsappConnections.map((c) => [c.identifier, c.id]),
+  );
+  const groups: WhatsappGroupItem[] = dbGroups.map((group) => ({
+    id: group.groupId,
+    name: group.name,
+    imported: connectionByIdentifier.has(group.groupId),
+    connectionId: connectionByIdentifier.get(group.groupId)?.toString() ?? null,
+  }));
+
+  const lastSyncedAt =
+    dbGroups.length > 0
+      ? dbGroups
+          .reduce(
+            (latest, current) =>
+              current.lastFetchedAt > latest ? current.lastFetchedAt : latest,
+            dbGroups[0].lastFetchedAt,
+          )
+          .toISOString()
+      : null;
+
+  return { groups, lastSyncedAt };
+}
+
+async function getSmtpSettings(): Promise<SmtpSettings> {
+  const existing = await db
+    .select()
+    .from(smtpSettingsTable)
+    .orderBy(desc(smtpSettingsTable.updatedAt))
+    .limit(1);
+
+  if (existing.length === 0) {
+    return {
+      host: "",
+      port: 587,
+      username: "",
+      password: "",
+      fromAddress: "",
+      encryption: "starttls",
+    };
+  }
+
+  const row = existing[0];
+  return {
+    host: row.host,
+    port: row.port,
+    username: row.username,
+    password: row.password,
+    fromAddress: row.fromAddress,
+    encryption: row.encryption as SmtpEncryption,
+  };
+}
 
 // GET /api/settings — full settings snapshot
-router.get('/', (_req, res) => {
-  res.json({
-    apiKeys,
-    smtpSettings,
-    users,
-    availableSections,
-    availablePeople,
-  })
-})
+router.get("/", async (_req, res) => {
+  try {
+    const smtpSettings = await getSmtpSettings();
 
-// POST /api/settings/api-keys — add API key (stored masked only)
-router.post('/api-keys', (req, res) => {
-  const body = req.body as Partial<ApiKeyFormData>
-  const service = typeof body.service === 'string' ? body.service.trim() : ''
-  const key = typeof body.key === 'string' ? body.key.trim() : ''
+    // Get API keys
+    const dbApiKeys = await db.select().from(apiKeys);
+    const formattedApiKeys: ApiKey[] = dbApiKeys.map((k) => ({
+      id: k.id.toString(),
+      service: k.service,
+      maskedKey: k.maskedKey,
+      createdAt: k.createdAt.toISOString(),
+      lastUsedAt: k.lastUsedAt?.toISOString() ?? null,
+    }));
 
-  if (!service || !key) {
-    res.status(400).json({ error: 'service and key are required' })
-    return
+    // Get users
+    const dbUsers = await db.select().from(users);
+    const formattedUsers: SystemUser[] = dbUsers.map((u) => ({
+      id: u.id.toString(),
+      name: u.name,
+      email: u.email,
+      role: u.role as UserRole,
+      status: u.active ? ("active" as const) : ("inactive" as const),
+      lastActiveAt: u.createdAt.toISOString(),
+      sectionPermissions: u.sectionPermissions,
+      assignedPeopleIds: u.assignedPeopleIds,
+    }));
+
+    // Get available people from tasks
+    const peopleWithTasks = await db
+      .select({
+        owner: tasks.owner,
+      })
+      .from(tasks)
+      .where(sql`${tasks.owner} is not null`)
+      .groupBy(tasks.owner);
+
+    const availablePeople: PersonOption[] = peopleWithTasks.map((p, idx) => ({
+      id: `person-${idx + 1}`,
+      name: p.owner || "Unknown",
+    }));
+
+    const snapshot: SettingsSnapshot = {
+      apiKeys: formattedApiKeys,
+      smtpSettings,
+      users: formattedUsers,
+      availableSections,
+      availablePeople,
+    };
+
+    res.json(snapshot);
+  } catch (error) {
+    console.error("[Settings] Error fetching settings:", error);
+    res.status(500).json({ error: "Failed to fetch settings" });
   }
+});
 
-  const now = new Date().toISOString()
-  const apiKey: ApiKey = {
-    id: randomId('key'),
-    service,
-    maskedKey: maskKey(key),
-    createdAt: now,
-    lastUsedAt: null,
+// GET /api/settings/whatsapp-groups — cached list + import status
+router.get("/whatsapp-groups", async (_req, res) => {
+  try {
+    const view = await getWhatsappGroupsView();
+    res.json(view);
+  } catch (error) {
+    console.error("[Settings] Error fetching WhatsApp groups:", error);
+    res.status(500).json({ error: "Failed to fetch WhatsApp groups" });
   }
+});
 
-  apiKeys = [apiKey, ...apiKeys]
-  res.status(201).json({ apiKey })
-})
+// POST /api/settings/whatsapp-groups/sync — refresh from Fonnte + bulk import all groups
+router.post("/whatsapp-groups/sync", async (_req, res) => {
+  try {
+    await fonnteService.updateWhatsappGroupList();
+    const groups = await fonnteService.getWhatsappGroupList();
+    const now = new Date();
+
+    // 1) Cache groups
+    for (const group of groups) {
+      await db
+        .insert(fonnteGroups)
+        .values({
+          groupId: group.id,
+          name: group.name,
+          lastFetchedAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: fonnteGroups.groupId,
+          set: {
+            name: group.name,
+            lastFetchedAt: now,
+            updatedAt: now,
+          },
+        });
+    }
+
+    // 2) Bulk import groups as active WhatsApp connections (skip duplicates)
+    let insertedConnections = 0;
+    let skippedExisting = 0;
+
+    if (groups.length > 0) {
+      const identifiers = groups.map((g) => g.id);
+      const existingConnections = await db
+        .select({
+          identifier: connections.identifier,
+        })
+        .from(connections)
+        .where(
+          and(
+            eq(connections.channelType, "whatsapp"),
+            inArray(connections.identifier, identifiers),
+          ),
+        );
+      const existingIdentifierSet = new Set(
+        existingConnections.map((connection) => connection.identifier),
+      );
+
+      const projectId = await ensureDefaultProjectId();
+      const rowsToInsert = groups
+        .filter((group) => {
+          if (existingIdentifierSet.has(group.id)) {
+            skippedExisting += 1;
+            return false;
+          }
+          return true;
+        })
+        .map((group) => ({
+          projectId,
+          channelType: "whatsapp",
+          label: group.name.trim() || group.id,
+          identifier: group.id,
+          status: "active",
+          lastSyncAt: now,
+          messagesProcessed: 0,
+          reportTime: "18:00",
+        }));
+
+      if (rowsToInsert.length > 0) {
+        const inserted = await db.insert(connections).values(rowsToInsert).returning();
+        insertedConnections = inserted.length;
+      }
+    }
+
+    const view = await getWhatsappGroupsView();
+    res.json({
+      fetchedCount: groups.length,
+      insertedConnections,
+      skippedExisting,
+      ...view,
+    });
+  } catch (error) {
+    console.error("[Settings] Error syncing WhatsApp groups:", error);
+    const message =
+      error instanceof Error ? error.message : "Failed to sync WhatsApp groups";
+    res.status(500).json({ error: message });
+  }
+});
+
+// POST /api/settings/api-keys — add API key
+router.post("/api-keys", async (req, res) => {
+  try {
+    const body = req.body as Partial<ApiKeyFormData>;
+    const service = typeof body.service === "string" ? body.service.trim() : "";
+    const key = typeof body.key === "string" ? body.key.trim() : "";
+
+    if (!service || !key) {
+      return res.status(400).json({ error: "service and key are required" });
+    }
+
+    const masked = maskKey(key);
+    const encrypted = encryptSecret(key);
+
+    const [newKey] = await db
+      .insert(apiKeys)
+      .values({
+        service,
+        maskedKey: masked,
+        encryptedKey: encrypted.encryptedValue,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+      })
+      .returning();
+
+    const apiKey: ApiKey = {
+      id: newKey.id.toString(),
+      service: newKey.service,
+      maskedKey: newKey.maskedKey,
+      createdAt: newKey.createdAt.toISOString(),
+      lastUsedAt: newKey.lastUsedAt?.toISOString() ?? null,
+    };
+
+    res.status(201).json({ apiKey });
+  } catch (error) {
+    console.error("[Settings] Error adding API key:", error);
+    res.status(500).json({ error: "Failed to add API key" });
+  }
+});
 
 // DELETE /api/settings/api-keys/:keyId — delete API key
-router.delete('/api-keys/:keyId', (req, res) => {
-  const keyId = req.params.keyId
-  const before = apiKeys.length
-  apiKeys = apiKeys.filter((k) => k.id !== keyId)
-  if (apiKeys.length === before) {
-    res.status(404).json({ error: 'API key not found' })
-    return
+router.delete("/api-keys/:keyId", async (req, res) => {
+  try {
+    const keyId = Number.parseInt(req.params.keyId, 10);
+    if (Number.isNaN(keyId)) {
+      return res.status(400).json({ error: "Invalid key ID" });
+    }
+
+    const deleted = await db
+      .delete(apiKeys)
+      .where(eq(apiKeys.id, keyId))
+      .returning();
+
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: "API key not found" });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Settings] Error deleting API key:", error);
+    res.status(500).json({ error: "Failed to delete API key" });
   }
-  res.json({ success: true })
-})
+});
 
 // PUT /api/settings/smtp — save SMTP settings
-router.put('/smtp', (req, res) => {
-  const body = req.body as Partial<SmtpSettings>
-  const host = typeof body.host === 'string' ? body.host.trim() : ''
-  const port =
-    typeof body.port === 'number' && Number.isFinite(body.port) ? body.port : 587
-  const username = typeof body.username === 'string' ? body.username.trim() : ''
-  const password = typeof body.password === 'string' ? body.password : ''
-  const fromAddress =
-    typeof body.fromAddress === 'string' ? body.fromAddress.trim() : ''
-  const encryption: SmtpEncryption =
-    body.encryption === 'none' || body.encryption === 'ssl' || body.encryption === 'starttls'
-      ? body.encryption
-      : 'starttls'
+router.put("/smtp", async (req, res) => {
+  try {
+    const body = req.body as Partial<SmtpSettings>;
 
-  smtpSettings = { host, port, username, password, fromAddress, encryption }
-  res.json({ smtpSettings })
-})
+    const current = await getSmtpSettings();
+    const nextSettings: SmtpSettings = {
+      host: typeof body.host === "string" ? body.host.trim() : current.host,
+      port: typeof body.port === "number" ? body.port : current.port,
+      username: typeof body.username === "string" ? body.username.trim() : current.username,
+      password: typeof body.password === "string" ? body.password : current.password,
+      fromAddress:
+        typeof body.fromAddress === "string" ? body.fromAddress.trim() : current.fromAddress,
+      encryption:
+        body.encryption === "none" || body.encryption === "ssl" || body.encryption === "starttls"
+          ? body.encryption
+          : current.encryption,
+    };
 
-// POST /api/settings/smtp/test — test SMTP connection (stub)
-router.post('/smtp/test', async (_req, res) => {
-  // For now this is a stub that always succeeds. When SMTP sending is wired,
-  // replace this with a real connection verification.
-  res.json({ success: true })
-})
+    const [saved] = await db
+      .insert(smtpSettingsTable)
+      .values({
+        id: SMTP_SETTINGS_ID,
+        host: nextSettings.host,
+        port: nextSettings.port,
+        username: nextSettings.username,
+        password: nextSettings.password,
+        fromAddress: nextSettings.fromAddress,
+        encryption: nextSettings.encryption,
+      })
+      .onConflictDoUpdate({
+        target: smtpSettingsTable.id,
+        set: {
+          host: nextSettings.host,
+          port: nextSettings.port,
+          username: nextSettings.username,
+          password: nextSettings.password,
+          fromAddress: nextSettings.fromAddress,
+          encryption: nextSettings.encryption,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    res.json({
+      smtpSettings: {
+        host: saved.host,
+        port: saved.port,
+        username: saved.username,
+        password: saved.password,
+        fromAddress: saved.fromAddress,
+        encryption: saved.encryption,
+      },
+    });
+  } catch (error) {
+    console.error("[Settings] Error updating SMTP:", error);
+    res.status(500).json({ error: "Failed to update SMTP settings" });
+  }
+});
+
+// POST /api/settings/smtp/test — test SMTP connection
+router.post("/smtp/test", async (_req, res) => {
+  try {
+    const smtpSettings = await getSmtpSettings();
+    if (!smtpSettings.host || !smtpSettings.username || !smtpSettings.fromAddress) {
+      return res.status(400).json({ error: "SMTP settings are incomplete" });
+    }
+
+    const secure = smtpSettings.encryption === "ssl";
+    const transporter = nodemailer.createTransport({
+      host: smtpSettings.host,
+      port: smtpSettings.port,
+      secure,
+      auth: {
+        user: smtpSettings.username,
+        pass: smtpSettings.password,
+      },
+      requireTLS: smtpSettings.encryption === "starttls",
+    });
+
+    await transporter.verify();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Settings] Error testing SMTP:", error);
+    res.status(500).json({ error: "Failed to test SMTP" });
+  }
+});
 
 // POST /api/settings/users — create user
-router.post('/users', (req, res) => {
-  const body = req.body as Partial<UserFormData>
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
-  const email = typeof body.email === 'string' ? body.email.trim() : ''
-  const role: UserRole = body.role === 'admin' || body.role === 'regular' ? body.role : 'regular'
-  const sectionPermissions = Array.isArray(body.sectionPermissions) ? body.sectionPermissions.filter((s) => typeof s === 'string') : []
-  const assignedPeopleIds = Array.isArray(body.assignedPeopleIds) ? body.assignedPeopleIds.filter((s) => typeof s === 'string') : []
+router.post("/users", async (req, res) => {
+  try {
+    const body = req.body as Partial<UserFormData>;
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    const role = body.role === "admin" || body.role === "regular" ? body.role : "regular";
+    const password = typeof body.password === "string" ? body.password : "";
+    const sectionPermissions = Array.isArray(body.sectionPermissions) ? body.sectionPermissions : [];
+    const assignedPeopleIds = Array.isArray(body.assignedPeopleIds) ? body.assignedPeopleIds : [];
 
-  if (!name || !email) {
-    res.status(400).json({ error: 'name and email are required' })
-    return
+    if (!name || !email) {
+      return res.status(400).json({ error: "name and email are required" });
+    }
+
+    if (!password || password.length < 8) {
+      return res
+        .status(400)
+        .json({ error: "password is required and must be at least 8 characters" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        name,
+        email,
+        passwordHash,
+        role,
+        sectionPermissions,
+        assignedPeopleIds,
+        active: true,
+      })
+      .returning();
+
+    const user: SystemUser = {
+      id: newUser.id.toString(),
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role as UserRole,
+      status: "active",
+      lastActiveAt: newUser.createdAt.toISOString(),
+      sectionPermissions: newUser.sectionPermissions,
+      assignedPeopleIds: newUser.assignedPeopleIds,
+    };
+
+    res.status(201).json({ user });
+  } catch (error) {
+    console.error("[Settings] Error creating user:", error);
+    res.status(500).json({ error: "Failed to create user" });
   }
-
-  const now = new Date().toISOString()
-  const user: SystemUser = {
-    id: randomId('sysuser'),
-    name,
-    email,
-    role,
-    status: 'active',
-    lastActiveAt: now,
-    sectionPermissions,
-    assignedPeopleIds,
-  }
-
-  users = [user, ...users]
-  res.status(201).json({ user })
-})
+});
 
 // PUT /api/settings/users/:userId — edit user
-router.put('/users/:userId', (req, res) => {
-  const userId = req.params.userId
-  const idx = users.findIndex((u) => u.id === userId)
-  if (idx === -1) {
-    res.status(404).json({ error: 'User not found' })
-    return
+router.put("/users/:userId", async (req, res) => {
+  try {
+    const userId = Number.parseInt(req.params.userId, 10);
+    if (Number.isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const body = req.body as Partial<UserFormData>;
+    const name = typeof body.name === "string" ? body.name.trim() : undefined;
+    const email = typeof body.email === "string" ? body.email.trim() : undefined;
+    const role = body.role === "admin" || body.role === "regular" ? body.role : undefined;
+    const password = typeof body.password === "string" ? body.password : undefined;
+    const sectionPermissions = Array.isArray(body.sectionPermissions) ? body.sectionPermissions : undefined;
+    const assignedPeopleIds = Array.isArray(body.assignedPeopleIds) ? body.assignedPeopleIds : undefined;
+
+    const updates: any = {};
+    if (name) updates.name = name;
+    if (email) updates.email = email;
+    if (role) updates.role = role;
+    if (sectionPermissions) updates.sectionPermissions = sectionPermissions;
+    if (assignedPeopleIds) updates.assignedPeopleIds = assignedPeopleIds;
+    if (password && password.length >= 8) {
+      updates.passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, userId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user: SystemUser = {
+      id: updated.id.toString(),
+      name: updated.name,
+      email: updated.email,
+      role: updated.role as UserRole,
+      status: updated.active ? "active" : "inactive",
+      lastActiveAt: updated.createdAt.toISOString(),
+      sectionPermissions: updated.sectionPermissions,
+      assignedPeopleIds: updated.assignedPeopleIds,
+    };
+
+    res.json({ user });
+  } catch (error) {
+    console.error("[Settings] Error updating user:", error);
+    res.status(500).json({ error: "Failed to update user" });
   }
+});
 
-  const body = req.body as Partial<UserFormData>
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
-  const email = typeof body.email === 'string' ? body.email.trim() : ''
-  const role: UserRole = body.role === 'admin' || body.role === 'regular' ? body.role : users[idx].role
-  const sectionPermissions = Array.isArray(body.sectionPermissions) ? body.sectionPermissions.filter((s) => typeof s === 'string') : users[idx].sectionPermissions
-  const assignedPeopleIds = Array.isArray(body.assignedPeopleIds) ? body.assignedPeopleIds.filter((s) => typeof s === 'string') : users[idx].assignedPeopleIds
+// POST /api/settings/users/:userId/deactivate — deactivate user
+router.post("/users/:userId/deactivate", async (req, res) => {
+  try {
+    const userId = Number.parseInt(req.params.userId, 10);
+    if (Number.isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
 
-  if (!name || !email) {
-    res.status(400).json({ error: 'name and email are required' })
-    return
+    const [updated] = await db
+      .update(users)
+      .set({ active: false })
+      .where(eq(users.id, userId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user: SystemUser = {
+      id: updated.id.toString(),
+      name: updated.name,
+      email: updated.email,
+      role: updated.role as UserRole,
+      status: "inactive",
+      lastActiveAt: updated.createdAt.toISOString(),
+      sectionPermissions: updated.sectionPermissions,
+      assignedPeopleIds: updated.assignedPeopleIds,
+    };
+
+    res.json({ user });
+  } catch (error) {
+    console.error("[Settings] Error deactivating user:", error);
+    res.status(500).json({ error: "Failed to deactivate user" });
   }
+});
 
-  const updated: SystemUser = {
-    ...users[idx],
-    name,
-    email,
-    role,
-    sectionPermissions,
-    assignedPeopleIds,
+// POST /api/settings/users/:userId/reactivate — reactivate user
+router.post("/users/:userId/reactivate", async (req, res) => {
+  try {
+    const userId = Number.parseInt(req.params.userId, 10);
+    if (Number.isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set({ active: true })
+      .where(eq(users.id, userId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user: SystemUser = {
+      id: updated.id.toString(),
+      name: updated.name,
+      email: updated.email,
+      role: updated.role as UserRole,
+      status: "active",
+      lastActiveAt: updated.createdAt.toISOString(),
+      sectionPermissions: updated.sectionPermissions,
+      assignedPeopleIds: updated.assignedPeopleIds,
+    };
+
+    res.json({ user });
+  } catch (error) {
+    console.error("[Settings] Error reactivating user:", error);
+    res.status(500).json({ error: "Failed to reactivate user" });
   }
+});
 
-  users = users.map((u) => (u.id === userId ? updated : u))
-  res.json({ user: updated })
-})
-
-// POST /api/settings/users/:userId/deactivate
-router.post('/users/:userId/deactivate', (req, res) => {
-  const userId = req.params.userId
-  const user = users.find((u) => u.id === userId)
-  if (!user) {
-    res.status(404).json({ error: 'User not found' })
-    return
-  }
-  if (user.status === 'inactive') {
-    res.status(400).json({ error: 'User is already inactive' })
-    return
-  }
-  const updated: SystemUser = { ...user, status: 'inactive' }
-  users = users.map((u) => (u.id === userId ? updated : u))
-  res.json({ user: updated })
-})
-
-// POST /api/settings/users/:userId/reactivate
-router.post('/users/:userId/reactivate', (req, res) => {
-  const userId = req.params.userId
-  const user = users.find((u) => u.id === userId)
-  if (!user) {
-    res.status(404).json({ error: 'User not found' })
-    return
-  }
-  if (user.status === 'active') {
-    res.status(400).json({ error: 'User is already active' })
-    return
-  }
-  const updated: SystemUser = { ...user, status: 'active' }
-  users = users.map((u) => (u.id === userId ? updated : u))
-  res.json({ user: updated })
-})
-
-export { router as settingsRouter }
-
+export { router as settingsRouter };

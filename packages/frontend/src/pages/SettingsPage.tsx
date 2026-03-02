@@ -9,6 +9,8 @@ import type {
   SmtpSettings,
   SystemUser,
   UserFormData,
+  WhatsappGroupsState,
+  WhatsappGroupsSyncResult,
 } from '../components/settings'
 
 interface SettingsData {
@@ -17,6 +19,8 @@ interface SettingsData {
   users: SystemUser[]
   availableSections: SectionOption[]
   availablePeople: PersonOption[]
+  whatsappGroups: WhatsappGroupsState['groups']
+  whatsappGroupsLastSyncedAt: string | null
 }
 
 type Notice = { type: 'info' | 'success' | 'error'; message: string }
@@ -28,8 +32,17 @@ export default function SettingsPage() {
 
   const refresh = useCallback(() => {
     setError(null)
-    return apiFetch<SettingsData>('/api/settings')
-      .then(setData)
+    return Promise.all([
+      apiFetch<SettingsData>('/api/settings'),
+      apiFetch<WhatsappGroupsState>('/api/settings/whatsapp-groups'),
+    ])
+      .then(([settings, whatsapp]) =>
+        setData({
+          ...settings,
+          whatsappGroups: whatsapp.groups,
+          whatsappGroupsLastSyncedAt: whatsapp.lastSyncedAt,
+        }),
+      )
       .catch((err) => setError((err as Error).message))
   }, [])
 
@@ -126,6 +139,8 @@ export default function SettingsPage() {
         users={data.users}
         availableSections={data.availableSections}
         availablePeople={data.availablePeople}
+        whatsappGroups={data.whatsappGroups}
+        whatsappGroupsLastSyncedAt={data.whatsappGroupsLastSyncedAt}
         onAddApiKey={(payload: ApiKeyFormData) =>
           mutate(() =>
             apiFetch('/api/settings/api-keys', {
@@ -180,6 +195,13 @@ export default function SettingsPage() {
             }),
           )
         }
+        onSyncWhatsappGroups={async () => {
+          const result = await apiFetch<WhatsappGroupsSyncResult>('/api/settings/whatsapp-groups/sync', {
+            method: 'POST',
+          })
+          await refresh()
+          return result
+        }}
       />
     </div>
   )

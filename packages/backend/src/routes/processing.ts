@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Router } from "express";
+import { desc, eq } from "drizzle-orm";
+import { db } from "../db";
+import { processingRules, processingRuns } from "../db/schema";
+import { getQueue } from "../queue";
+import { JobTypes, type RunProcessingRuleJob } from "../queue/jobs";
 
 type RuleAction = "extract_tasks" | "update_profiles" | "both";
-type RunStatus = "success" | "partial" | "failed";
+type RunStatus = "running" | "success" | "error";
 
 interface ProcessingRule {
   id: string;
@@ -21,11 +23,6 @@ interface ProcessingRule {
   createdAt: string;
 }
 
-interface RunError {
-  message: string;
-  context: string;
-}
-
 interface ProcessingRun {
   id: string;
   ruleId: string;
@@ -37,7 +34,7 @@ interface ProcessingRun {
   tasksExtracted: number;
   identitiesResolved: number;
   profilesUpdated: number;
-  errors: RunError[];
+  errors: Array<{ message: string; context: string }>;
 }
 
 interface RuleFormData {
@@ -49,34 +46,12 @@ interface RuleFormData {
   action: RuleAction;
 }
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const samplePath = resolve(
-  __dirname,
-  "../../../../product-plan/sections/processing/sample-data.json",
-);
-const sampleData = JSON.parse(readFileSync(samplePath, "utf-8")) as {
-  rules: ProcessingRule[];
-  runs: ProcessingRun[];
-};
-
-let rules: ProcessingRule[] = [...(sampleData.rules ?? [])];
-let runs: ProcessingRun[] = [...(sampleData.runs ?? [])];
-
 const CHANNEL_NAME_BY_ID: Record<string, string> = {
-  ch_whatsapp: "WhatsApp",
-  ch_google_meet: "Google Meet",
-  ch_email: "Email",
-  ch_webhook: "Webhook",
+  whatsapp: "WhatsApp",
+  google_meet: "Google Meet",
+  email: "Email",
+  webhook: "Webhook",
 };
-
-function randomId(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function randInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
 
 function normalizeRuleForm(body: unknown): RuleFormData | null {
   const b = body as Partial<Record<keyof RuleFormData, unknown>>;
@@ -98,10 +73,6 @@ function normalizeRuleForm(body: unknown): RuleFormData | null {
     return null;
   }
 
-  for (const id of channelIds) {
-    if (!CHANNEL_NAME_BY_ID[id]) return null;
-  }
-
   return {
     name,
     description,
@@ -112,214 +83,315 @@ function normalizeRuleForm(body: unknown): RuleFormData | null {
   };
 }
 
-function pickRunStatus(): RunStatus {
-  const roll = Math.random();
-  if (roll < 0.7) return "success";
-  if (roll < 0.9) return "partial";
-  return "failed";
-}
-
-function makeRunErrors(status: RunStatus, action: RuleAction): RunError[] {
-  if (status === "success") return [];
-
-  const errorPool: RunError[] = [
-    {
-      message:
-        "Rate limit exceeded on AI model API while processing a batch. Retry scheduled for next run.",
-      context: "API call",
-    },
-    {
-      message:
-        "Failed to resolve identity for a sender — multiple candidate matches. Skipped profile update for that sender.",
-      context: "Identity resolution",
-    },
-    {
-      message:
-        "Upstream source returned transient error while fetching messages. Some messages were skipped.",
-      context: "Source sync",
-    },
-  ];
-
-  if (action === "update_profiles" || action === "both") {
-    errorPool.push({
-      message:
-        "Profile update batch aborted due to validation failure. Pending updates were rolled back.",
-      context: "Profile update",
-    });
-  }
-
-  const count = status === "partial" ? 1 : randInt(1, 2);
-  const errors: RunError[] = [];
-  for (let i = 0; i < count; i++) {
-    errors.push(errorPool[randInt(0, errorPool.length - 1)]);
-  }
-  return errors;
-}
-
-function synthesizeRun(rule: ProcessingRule): ProcessingRun {
-  const startedAt = new Date().toISOString();
-  const status = pickRunStatus();
-  const duration = randInt(12, 240);
-
-  const messagesProcessed =
-    status === "failed" ? randInt(0, 70) : randInt(20, 160);
-  const identitiesResolved =
-    status === "failed" ? randInt(0, 2) : randInt(0, 8);
-
-  const tasksExtracted =
-    rule.action === "extract_tasks" || rule.action === "both"
-      ? status === "failed"
-        ? randInt(0, 4)
-        : randInt(3, 22)
-      : 0;
-
-  const profilesUpdated =
-    rule.action === "update_profiles" || rule.action === "both"
-      ? status === "failed"
-        ? 0
-        : randInt(0, 10)
-      : 0;
-
-  return {
-    id: randomId("run"),
-    ruleId: rule.id,
-    ruleName: rule.name,
-    startedAt,
-    duration,
-    status,
-    messagesProcessed,
-    tasksExtracted,
-    identitiesResolved,
-    profilesUpdated,
-    errors: makeRunErrors(status, rule.action),
-  };
-}
-
 const router = Router();
 
 // GET /api/processing — rules + runs
-router.get("/", (_req, res) => {
-  res.json({ rules, runs });
+router.get("/", async (_req, res) => {
+  try {
+    const dbRules = await db
+      .select()
+      .from(processingRules)
+      .orderBy(desc(processingRules.createdAt));
+    const dbRuns = await db
+      .select()
+      .from(processingRuns)
+      .orderBy(desc(processingRuns.startedAt));
+
+    // Get last run info for each rule
+    const ruleRunMap = new Map<
+      number,
+      { lastRunAt: string | null; lastRunStatus: RunStatus | null }
+    >();
+
+    for (const run of dbRuns) {
+      if (!ruleRunMap.has(run.ruleId)) {
+        ruleRunMap.set(run.ruleId, {
+          lastRunAt: run.startedAt.toISOString(),
+          lastRunStatus: run.status as RunStatus,
+        });
+      }
+    }
+
+    const rules: ProcessingRule[] = dbRules.map((r) => {
+      const lastRun = ruleRunMap.get(r.id);
+      return {
+        id: r.id.toString(),
+        name: r.name,
+        description: r.description,
+        schedule: r.schedule,
+        channelIds: r.channelIds,
+        channelNames: r.channelIds.map((id) => CHANNEL_NAME_BY_ID[id] || id),
+        prompt: r.prompt,
+        action: r.action as RuleAction,
+        enabled: r.enabled,
+        lastRunAt: lastRun?.lastRunAt || null,
+        lastRunStatus: lastRun?.lastRunStatus || null,
+        createdAt: r.createdAt.toISOString(),
+      };
+    });
+
+    const runs: ProcessingRun[] = await Promise.all(
+      dbRuns.map(async (run) => {
+        const rule = dbRules.find((r) => r.id === run.ruleId);
+        const duration = run.finishedAt
+          ? Math.floor((run.finishedAt.getTime() - run.startedAt.getTime()) / 1000)
+          : 0;
+
+        const output = run.output as Record<string, number> | null;
+
+        return {
+          id: run.id.toString(),
+          ruleId: run.ruleId.toString(),
+          ruleName: rule?.name || "Unknown Rule",
+          startedAt: run.startedAt.toISOString(),
+          duration,
+          status: run.status as RunStatus,
+          messagesProcessed: output?.messagesProcessed || 0,
+          tasksExtracted: output?.tasksExtracted || 0,
+          identitiesResolved: output?.identitiesResolved || 0,
+          profilesUpdated: output?.profilesUpdated || 0,
+          errors: run.error ? [{ message: run.error, context: "Execution" }] : [],
+        };
+      }),
+    );
+
+    res.json({ rules, runs });
+  } catch (error) {
+    console.error("[Processing] Error fetching data:", error);
+    res.status(500).json({ error: "Failed to fetch processing data" });
+  }
 });
 
 // POST /api/processing/rules — create rule
-router.post("/rules", (req, res) => {
-  const form = normalizeRuleForm(req.body);
-  if (!form) {
-    res.status(400).json({ error: "Invalid rule payload" });
-    return;
+router.post("/rules", async (req, res) => {
+  try {
+    const form = normalizeRuleForm(req.body);
+    if (!form) {
+      return res.status(400).json({ error: "Invalid rule payload" });
+    }
+
+    const [newRule] = await db
+      .insert(processingRules)
+      .values({
+        name: form.name,
+        description: form.description,
+        schedule: form.schedule,
+        channelIds: form.channelIds,
+        prompt: form.prompt,
+        action: form.action,
+        enabled: true,
+      })
+      .returning();
+
+    const rule: ProcessingRule = {
+      id: newRule.id.toString(),
+      name: newRule.name,
+      description: newRule.description,
+      schedule: newRule.schedule,
+      channelIds: newRule.channelIds,
+      channelNames: newRule.channelIds.map((id) => CHANNEL_NAME_BY_ID[id] || id),
+      prompt: newRule.prompt,
+      action: newRule.action as RuleAction,
+      enabled: newRule.enabled,
+      lastRunAt: null,
+      lastRunStatus: null,
+      createdAt: newRule.createdAt.toISOString(),
+    };
+
+    res.status(201).json({ rule });
+  } catch (error) {
+    console.error("[Processing] Error creating rule:", error);
+    res.status(500).json({ error: "Failed to create rule" });
   }
-
-  const now = new Date().toISOString();
-  const rule: ProcessingRule = {
-    id: randomId("rule"),
-    name: form.name,
-    description: form.description,
-    schedule: form.schedule,
-    channelIds: form.channelIds,
-    channelNames: form.channelIds.map((id) => CHANNEL_NAME_BY_ID[id]),
-    prompt: form.prompt,
-    action: form.action,
-    enabled: true,
-    lastRunAt: null,
-    lastRunStatus: null,
-    createdAt: now,
-  };
-
-  rules = [rule, ...rules];
-  res.status(201).json({ rule });
 });
 
 // PUT /api/processing/rules/:ruleId — edit rule
-router.put("/rules/:ruleId", (req, res) => {
-  const ruleId = req.params.ruleId;
-  const existing = rules.find((r) => r.id === ruleId);
-  if (!existing) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
+router.put("/rules/:ruleId", async (req, res) => {
+  try {
+    const ruleId = Number.parseInt(req.params.ruleId, 10);
+    if (Number.isNaN(ruleId)) {
+      return res.status(400).json({ error: "Invalid rule ID" });
+    }
+
+    const form = normalizeRuleForm(req.body);
+    if (!form) {
+      return res.status(400).json({ error: "Invalid rule payload" });
+    }
+
+    const [updated] = await db
+      .update(processingRules)
+      .set({
+        name: form.name,
+        description: form.description,
+        schedule: form.schedule,
+        channelIds: form.channelIds,
+        prompt: form.prompt,
+        action: form.action,
+      })
+      .where(eq(processingRules.id, ruleId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    const rule: ProcessingRule = {
+      id: updated.id.toString(),
+      name: updated.name,
+      description: updated.description,
+      schedule: updated.schedule,
+      channelIds: updated.channelIds,
+      channelNames: updated.channelIds.map((id) => CHANNEL_NAME_BY_ID[id] || id),
+      prompt: updated.prompt,
+      action: updated.action as RuleAction,
+      enabled: updated.enabled,
+      lastRunAt: null,
+      lastRunStatus: null,
+      createdAt: updated.createdAt.toISOString(),
+    };
+
+    res.json({ rule });
+  } catch (error) {
+    console.error("[Processing] Error updating rule:", error);
+    res.status(500).json({ error: "Failed to update rule" });
   }
-
-  const form = normalizeRuleForm(req.body);
-  if (!form) {
-    res.status(400).json({ error: "Invalid rule payload" });
-    return;
-  }
-
-  const updated: ProcessingRule = {
-    ...existing,
-    name: form.name,
-    description: form.description,
-    schedule: form.schedule,
-    channelIds: form.channelIds,
-    channelNames: form.channelIds.map((id) => CHANNEL_NAME_BY_ID[id]),
-    prompt: form.prompt,
-    action: form.action,
-  };
-
-  rules = rules.map((r) => (r.id === ruleId ? updated : r));
-  runs = runs.map((run) =>
-    run.ruleId === ruleId ? { ...run, ruleName: updated.name } : run,
-  );
-
-  res.json({ rule: updated });
 });
 
 // DELETE /api/processing/rules/:ruleId — delete rule (and its run history)
-router.delete("/rules/:ruleId", (req, res) => {
-  const ruleId = req.params.ruleId;
-  const before = rules.length;
-  rules = rules.filter((r) => r.id !== ruleId);
-  if (rules.length === before) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
-  }
+router.delete("/rules/:ruleId", async (req, res) => {
+  try {
+    const ruleId = Number.parseInt(req.params.ruleId, 10);
+    if (Number.isNaN(ruleId)) {
+      return res.status(400).json({ error: "Invalid rule ID" });
+    }
 
-  runs = runs.filter((run) => run.ruleId !== ruleId);
-  res.json({ success: true });
+    const deleted = await db
+      .delete(processingRules)
+      .where(eq(processingRules.id, ruleId))
+      .returning();
+
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Processing] Error deleting rule:", error);
+    res.status(500).json({ error: "Failed to delete rule" });
+  }
 });
 
 // POST /api/processing/rules/:ruleId/toggle — enable/disable rule
-router.post("/rules/:ruleId/toggle", (req, res) => {
-  const ruleId = req.params.ruleId;
-  const existing = rules.find((r) => r.id === ruleId);
-  if (!existing) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
-  }
+router.post("/rules/:ruleId/toggle", async (req, res) => {
+  try {
+    const ruleId = Number.parseInt(req.params.ruleId, 10);
+    if (Number.isNaN(ruleId)) {
+      return res.status(400).json({ error: "Invalid rule ID" });
+    }
 
-  const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
-  if (typeof enabled !== "boolean") {
-    res.status(400).json({ error: "enabled must be a boolean" });
-    return;
-  }
+    const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
 
-  const updated: ProcessingRule = { ...existing, enabled };
-  rules = rules.map((r) => (r.id === ruleId ? updated : r));
-  res.json({ rule: updated });
+    const [updated] = await db
+      .update(processingRules)
+      .set({ enabled })
+      .where(eq(processingRules.id, ruleId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    const rule: ProcessingRule = {
+      id: updated.id.toString(),
+      name: updated.name,
+      description: updated.description,
+      schedule: updated.schedule,
+      channelIds: updated.channelIds,
+      channelNames: updated.channelIds.map((id) => CHANNEL_NAME_BY_ID[id] || id),
+      prompt: updated.prompt,
+      action: updated.action as RuleAction,
+      enabled: updated.enabled,
+      lastRunAt: null,
+      lastRunStatus: null,
+      createdAt: updated.createdAt.toISOString(),
+    };
+
+    res.json({ rule });
+  } catch (error) {
+    console.error("[Processing] Error toggling rule:", error);
+    res.status(500).json({ error: "Failed to toggle rule" });
+  }
 });
 
 // POST /api/processing/rules/:ruleId/run — trigger manual run
-router.post("/rules/:ruleId/run", (req, res) => {
-  const ruleId = req.params.ruleId;
-  const existing = rules.find((r) => r.id === ruleId);
-  if (!existing) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
+router.post("/rules/:ruleId/run", async (req, res) => {
+  try {
+    const ruleId = Number.parseInt(req.params.ruleId, 10);
+    if (Number.isNaN(ruleId)) {
+      return res.status(400).json({ error: "Invalid rule ID" });
+    }
+
+    const rule = await db.query.processingRules.findFirst({
+      where: eq(processingRules.id, ruleId),
+    });
+
+    if (!rule) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    // Create a processing run record
+    const [newRun] = await db
+      .insert(processingRuns)
+      .values({
+        ruleId: rule.id,
+        status: "running",
+      })
+      .returning();
+
+    const queue = await getQueue();
+    const runJob: RunProcessingRuleJob = {
+      ruleId: rule.id,
+      runId: newRun.id,
+    };
+    await queue.send(JobTypes.RUN_PROCESSING_RULE, runJob);
+
+    const run: ProcessingRun = {
+      id: newRun.id.toString(),
+      ruleId: newRun.ruleId.toString(),
+      ruleName: rule.name,
+      startedAt: newRun.startedAt.toISOString(),
+      duration: 0,
+      status: newRun.status as RunStatus,
+      messagesProcessed: 0,
+      tasksExtracted: 0,
+      identitiesResolved: 0,
+      profilesUpdated: 0,
+      errors: [],
+    };
+
+    const ruleResponse: ProcessingRule = {
+      id: rule.id.toString(),
+      name: rule.name,
+      description: rule.description,
+      schedule: rule.schedule,
+      channelIds: rule.channelIds,
+      channelNames: rule.channelIds.map((id) => CHANNEL_NAME_BY_ID[id] || id),
+      prompt: rule.prompt,
+      action: rule.action as RuleAction,
+      enabled: rule.enabled,
+      lastRunAt: newRun.startedAt.toISOString(),
+      lastRunStatus: "running",
+      createdAt: rule.createdAt.toISOString(),
+    };
+
+    res.status(201).json({ run, rule: ruleResponse });
+  } catch (error) {
+    console.error("[Processing] Error triggering run:", error);
+    res.status(500).json({ error: "Failed to trigger run" });
   }
-
-  const run = synthesizeRun(existing);
-
-  const updated: ProcessingRule = {
-    ...existing,
-    lastRunAt: run.startedAt,
-    lastRunStatus: run.status,
-  };
-
-  rules = rules.map((r) => (r.id === ruleId ? updated : r));
-  runs = [run, ...runs];
-
-  res.status(201).json({ run, rule: updated });
 });
 
 export { router as processingRouter };
-

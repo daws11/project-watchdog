@@ -2,11 +2,27 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 
 type HealthResponse = {
-  status: "healthy" | "degraded";
+  status: "healthy" | "degraded" | "error";
   timestamp: string;
   uptime: number;
-  database: "connected" | "disconnected";
   message: string;
+  healthCheckDuration?: number;
+  database: {
+    status: "connected" | "disconnected";
+    latency: number;
+  };
+  queue: {
+    depth: number;
+    failedJobs: number;
+  };
+  webhook: {
+    lastReceivedAt: string | null;
+    messagesProcessed: number;
+  };
+  ai: {
+    lastJobStatus: "success" | "error" | "running" | null;
+    lastJobCompletedAt: string | null;
+  };
 };
 
 export default function HealthPage() {
@@ -31,7 +47,36 @@ export default function HealthPage() {
               <span className="font-semibold">Status:</span> {health.status}
             </p>
             <p>
-              <span className="font-semibold">Database:</span> {health.database}
+              <span className="font-semibold">Database:</span> {health.database.status}
+            </p>
+            <p>
+              <span className="font-semibold">DB Latency:</span> {health.database.latency}ms
+            </p>
+            <p>
+              <span className="font-semibold">Queue Depth:</span> {health.queue.depth}
+            </p>
+            <p>
+              <span className="font-semibold">Queue Failed Jobs:</span> {health.queue.failedJobs}
+            </p>
+            <p>
+              <span className="font-semibold">Last Webhook:</span>{" "}
+              {health.webhook.lastReceivedAt
+                ? new Date(health.webhook.lastReceivedAt).toLocaleString()
+                : "Never"}
+            </p>
+            <p>
+              <span className="font-semibold">Messages Processed:</span>{" "}
+              {health.webhook.messagesProcessed}
+            </p>
+            <p>
+              <span className="font-semibold">Last AI Job:</span>{" "}
+              {health.ai.lastJobStatus ?? "No runs"}
+            </p>
+            <p>
+              <span className="font-semibold">Last AI Completion:</span>{" "}
+              {health.ai.lastJobCompletedAt
+                ? new Date(health.ai.lastJobCompletedAt).toLocaleString()
+                : "N/A"}
             </p>
             <p>
               <span className="font-semibold">Uptime:</span>{" "}

@@ -11,6 +11,9 @@ export type {
   PersonOption,
   SystemUser,
   UserFormData,
+  WhatsappGroup,
+  WhatsappGroupsState,
+  WhatsappGroupsSyncResult,
   SettingsProps,
 } from './types'
 
