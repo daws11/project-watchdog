@@ -13,6 +13,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
+    "db:reset": "tsx src/scripts/db-reset.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },

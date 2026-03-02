@@ -301,7 +301,9 @@ router.get("/", async (_req, res) => {
 // GET /api/people/:id — single person with their tasks, messages, and average
 router.get("/:id", async (req, res) => {
   try {
-    const personId = decodeURIComponent(req.params.id).trim().toLowerCase();
+    // Person IDs in this API are canonicalized using `getPersonId()` (lowercase + URI-encoded).
+    // Clients may pass either the already-encoded id (preferred) or a raw display name.
+    const personId = getPersonId(decodeURIComponent(req.params.id));
     const allowedPersonIds =
       req.user?.role === "regular" && req.user.assignedPeopleIds.length > 0
         ? new Set(req.user.assignedPeopleIds)
@@ -341,7 +343,8 @@ router.get("/:id", async (req, res) => {
 // PUT /api/people/:personId/settings — update person settings
 router.put("/:personId/settings", async (req, res) => {
   try {
-    const personId = decodeURIComponent(req.params.personId).trim().toLowerCase();
+    // Keep storage key consistent with `PersonSummary.id` (encoded canonical form).
+    const personId = getPersonId(decodeURIComponent(req.params.personId));
     if (!personId) {
       return res.status(400).json({ error: "Invalid person ID" });
     }

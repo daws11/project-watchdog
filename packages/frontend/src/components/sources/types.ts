@@ -38,6 +38,9 @@ export interface SourcesProps {
   /** Called when user clicks a channel card to view its connections */
   onChannelClick?: (channelId: string) => void
 
+  /** Called when user requests a channel sync (e.g. WhatsApp group list) */
+  onSyncChannel?: (channelId: string) => void
+
   /** Called when user adds a new connection */
   onAddConnection?: (channelId: string, data: NewConnectionData) => void
 

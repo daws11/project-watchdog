@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import { QRCodeSVG } from 'qrcode.react'
 import {
   Key,
   Mail,
   Users,
-  MessageCircle,
+  Smartphone,
   Plus,
   Trash2,
   X,
@@ -20,6 +21,8 @@ import {
   Globe,
   User,
   CircleDot,
+  RefreshCcw,
+  LogOut,
 } from 'lucide-react'
 import type {
   SettingsProps,
@@ -32,8 +35,6 @@ import type {
   UserFormData,
   SectionOption,
   PersonOption,
-  WhatsappGroup,
-  WhatsappGroupsSyncResult,
 } from './types'
 
 /* ── Shared Styles ── */
@@ -69,7 +70,7 @@ const CATEGORIES: { id: SettingsCategory; label: string; sublabel: string; Icon:
   { id: 'api_keys', label: 'API Keys', sublabel: 'External service credentials', Icon: Key },
   { id: 'smtp', label: 'SMTP', sublabel: 'Outgoing email config', Icon: Mail },
   { id: 'users', label: 'Users', sublabel: 'Accounts & permissions', Icon: Users },
-  { id: 'whatsapp_groups', label: 'WhatsApp Groups', sublabel: 'Sync joined groups from Fonnte', Icon: MessageCircle },
+  { id: 'whatsapp_web', label: 'WhatsApp Web', sublabel: 'QR login & connection control', Icon: Smartphone },
 ]
 
 /* ── Main Component ── */
@@ -80,8 +81,7 @@ export function SettingsView({
   users,
   availableSections,
   availablePeople,
-  whatsappGroups,
-  whatsappGroupsLastSyncedAt,
+  whatsappWebStatus,
   onAddApiKey,
   onDeleteApiKey,
   onSaveSmtp,
@@ -90,7 +90,8 @@ export function SettingsView({
   onEditUser,
   onDeactivateUser,
   onReactivateUser,
-  onSyncWhatsappGroups,
+  onWhatsappWebLogout,
+  onWhatsappWebReconnect,
 }: SettingsProps) {
   const [category, setCategory] = useState<SettingsCategory>('api_keys')
 
@@ -170,11 +171,11 @@ export function SettingsView({
                 onReactivate={onReactivateUser}
               />
             )}
-            {category === 'whatsapp_groups' && (
-              <WhatsappGroupsPanel
-                groups={whatsappGroups}
-                lastSyncedAt={whatsappGroupsLastSyncedAt}
-                onSync={onSyncWhatsappGroups}
+            {category === 'whatsapp_web' && (
+              <WhatsappWebPanel
+                status={whatsappWebStatus}
+                onLogout={onWhatsappWebLogout}
+                onReconnect={onWhatsappWebReconnect}
               />
             )}
           </div>
@@ -483,112 +484,122 @@ function SmtpPanel({
   )
 }
 
-function WhatsappGroupsPanel({
-  groups,
-  lastSyncedAt,
-  onSync,
-}: {
-  groups: WhatsappGroup[]
-  lastSyncedAt: string | null
-  onSync?: () => Promise<WhatsappGroupsSyncResult | void>
-}) {
-  const [syncing, setSyncing] = useState(false)
-  const [summary, setSummary] = useState<WhatsappGroupsSyncResult | null>(null)
-  const importedCount = groups.filter((g) => g.imported).length
+/* ── Users Panel ── */
 
-  const handleSync = async () => {
-    if (!onSync || syncing) return
-    setSyncing(true)
+function WhatsappWebPanel({
+  status,
+  onLogout,
+  onReconnect,
+}: {
+  status: SettingsProps['whatsappWebStatus']
+  onLogout?: () => Promise<void>
+  onReconnect?: () => Promise<void>
+}) {
+  const [isRunningAction, setIsRunningAction] = useState<'logout' | 'reconnect' | null>(null)
+  const stateLabel: Record<SettingsProps['whatsappWebStatus']['state'], string> = {
+    starting: 'Starting',
+    qr_required: 'Waiting QR scan',
+    authenticated: 'Authenticated',
+    ready: 'Ready',
+    disconnected: 'Disconnected',
+    auth_failure: 'Auth failed',
+    error: 'Error',
+  }
+
+  const handleLogout = async () => {
+    if (!onLogout || isRunningAction) return
+    setIsRunningAction('logout')
     try {
-      const result = await onSync()
-      if (result) setSummary(result)
+      await onLogout()
     } finally {
-      setSyncing(false)
+      setIsRunningAction(null)
+    }
+  }
+
+  const handleReconnect = async () => {
+    if (!onReconnect || isRunningAction) return
+    setIsRunningAction('reconnect')
+    try {
+      await onReconnect()
+    } finally {
+      setIsRunningAction(null)
     }
   }
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2
             className="text-base font-bold text-zinc-900 dark:text-zinc-100"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
-            WhatsApp Groups
+            WhatsApp Web
           </h2>
           <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-            Sync joined groups from Fonnte and auto-import all groups as active sources.
+            Monitor ingestion runtime, scan QR, and control reconnect lifecycle.
           </p>
         </div>
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className={`${BTN_PRIMARY} disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {syncing ? 'Syncing...' : 'Sync group list'}
-        </button>
-      </div>
-
-      <div className="rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50/70 dark:bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
-        Call sync only when needed (for example after joining new groups), to avoid excessive fetch operations on Fonnte.
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleReconnect}
+            disabled={!onReconnect || isRunningAction !== null}
+            className={`${BTN_PRIMARY} disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            <RefreshCcw className="size-3.5" strokeWidth={1.8} />
+            Reconnect
+          </button>
+          <button
+            onClick={handleLogout}
+            disabled={!onLogout || isRunningAction !== null}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <LogOut className="size-3.5" strokeWidth={1.8} />
+            Force re-login
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Discovered Groups</div>
-          <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">{groups.length}</div>
+          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Connectivity</div>
+          <div className={`mt-1 text-sm font-semibold ${status.online ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+            {status.online ? 'Online' : 'Offline'}
+          </div>
         </div>
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Imported Connections</div>
-          <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">{importedCount}</div>
+          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Runtime State</div>
+          <div className="mt-1 text-sm font-semibold text-zinc-800 dark:text-zinc-200">{stateLabel[status.state]}</div>
         </div>
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Last Synced</div>
-          <div className="mt-1 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            {lastSyncedAt ? formatRelativeTime(lastSyncedAt) : 'Never'}
+          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">Last Heartbeat</div>
+          <div className="mt-1 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+            {status.lastHeartbeatAt ? formatRelativeTime(status.lastHeartbeatAt) : 'Never'}
           </div>
         </div>
       </div>
 
-      {summary && (
-        <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300">
-          Sync result: fetched {summary.fetchedCount}, inserted {summary.insertedConnections}, skipped {summary.skippedExisting}.
+      {status.info && (
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 p-3 text-xs text-zinc-600 dark:text-zinc-300">
+          {status.info}
         </div>
       )}
 
-      {groups.length === 0 ? (
-        <div className="py-16 text-center">
-          <p className="text-sm text-zinc-400 dark:text-zinc-500">No groups cached yet. Run manual sync to fetch from Fonnte.</p>
+      {status.state === 'qr_required' && status.qr ? (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 flex flex-col items-center gap-3">
+          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Scan QR with WhatsApp app</div>
+          <div className="rounded-lg p-3 bg-white border border-zinc-200">
+            <QRCodeSVG value={status.qr} size={240} />
+          </div>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 text-center">
+            Open WhatsApp &gt; Linked devices &gt; Link a device.
+          </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-          <div className="grid grid-cols-[1.2fr,1.8fr,0.8fr] gap-3 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500 bg-zinc-50 dark:bg-zinc-900/60">
-            <div>Group Name</div>
-            <div>Group ID</div>
-            <div>Status</div>
-          </div>
-          <div className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
-            {groups.map((group) => (
-              <div key={group.id} className="grid grid-cols-[1.2fr,1.8fr,0.8fr] gap-3 px-4 py-3 text-sm">
-                <div className="truncate text-zinc-900 dark:text-zinc-100">{group.name}</div>
-                <div className="truncate text-zinc-500 dark:text-zinc-400" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                  {group.id}
-                </div>
-                <div>
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${
-                      group.imported
-                        ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20'
-                        : 'text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700'
-                    }`}
-                  >
-                    {group.imported ? 'Imported' : 'Not imported'}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 p-10 text-center">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            QR akan muncul otomatis saat status membutuhkan login ulang.
+          </p>
         </div>
       )}
     </div>

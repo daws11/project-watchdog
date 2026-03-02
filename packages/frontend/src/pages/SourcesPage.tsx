@@ -38,6 +38,25 @@ export default function SourcesPage() {
     }
   };
 
+  const syncChannel = (channelId: string) => {
+    if (channelId !== "whatsapp") return;
+    void (async () => {
+      try {
+        setError(null);
+        await apiFetch(`/api/sources/whatsapp/sync`, {
+          method: "POST",
+        });
+
+        // Best-effort refresh: the WA ingestor will push group list asynchronously.
+        window.setTimeout(() => void refresh(), 1500);
+        window.setTimeout(() => void refresh(), 4000);
+      } catch (err) {
+        console.error("Sources sync failed:", err);
+        setError((err as Error).message);
+      }
+    })();
+  };
+
   if (error && !data) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -61,6 +80,7 @@ export default function SourcesPage() {
     <SourcesView
       channels={data.channels}
       connections={data.connections}
+      onSyncChannel={syncChannel}
       onAddConnection={(channelId: string, payload: NewConnectionData) =>
         mutate(() =>
           apiFetch(`/api/sources/${channelId}/connections`, {

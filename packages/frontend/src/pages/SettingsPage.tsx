@@ -9,18 +9,19 @@ import type {
   SmtpSettings,
   SystemUser,
   UserFormData,
-  WhatsappGroupsState,
-  WhatsappGroupsSyncResult,
+  WhatsappWebStatus,
 } from '../components/settings'
 
-interface SettingsData {
+interface SettingsDataBase {
   apiKeys: ApiKey[]
   smtpSettings: SmtpSettings
   users: SystemUser[]
   availableSections: SectionOption[]
   availablePeople: PersonOption[]
-  whatsappGroups: WhatsappGroupsState['groups']
-  whatsappGroupsLastSyncedAt: string | null
+}
+
+interface SettingsData extends SettingsDataBase {
+  whatsappWebStatus: WhatsappWebStatus
 }
 
 type Notice = { type: 'info' | 'success' | 'error'; message: string }
@@ -33,22 +34,33 @@ export default function SettingsPage() {
   const refresh = useCallback(() => {
     setError(null)
     return Promise.all([
-      apiFetch<SettingsData>('/api/settings'),
-      apiFetch<WhatsappGroupsState>('/api/settings/whatsapp-groups'),
+      apiFetch<SettingsDataBase>('/api/settings'),
+      apiFetch<WhatsappWebStatus>('/api/settings/whatsapp-web'),
     ])
-      .then(([settings, whatsapp]) =>
-        setData({
-          ...settings,
-          whatsappGroups: whatsapp.groups,
-          whatsappGroupsLastSyncedAt: whatsapp.lastSyncedAt,
-        }),
-      )
+      .then(([settings, whatsappWebStatus]) => setData({ ...settings, whatsappWebStatus }))
       .catch((err) => setError((err as Error).message))
+  }, [])
+
+  const refreshWhatsappStatus = useCallback(() => {
+    return apiFetch<WhatsappWebStatus>('/api/settings/whatsapp-web')
+      .then((status) => {
+        setData((current) => (current ? { ...current, whatsappWebStatus: status } : current))
+      })
+      .catch((err) => {
+        console.error('Failed to refresh WhatsApp status:', err)
+      })
   }, [])
 
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshWhatsappStatus()
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [refreshWhatsappStatus])
 
   const clearNoticeSoon = useCallback(() => {
     window.setTimeout(() => setNotice(null), 2500)
@@ -139,8 +151,7 @@ export default function SettingsPage() {
         users={data.users}
         availableSections={data.availableSections}
         availablePeople={data.availablePeople}
-        whatsappGroups={data.whatsappGroups}
-        whatsappGroupsLastSyncedAt={data.whatsappGroupsLastSyncedAt}
+        whatsappWebStatus={data.whatsappWebStatus}
         onAddApiKey={(payload: ApiKeyFormData) =>
           mutate(() =>
             apiFetch('/api/settings/api-keys', {
@@ -195,13 +206,20 @@ export default function SettingsPage() {
             }),
           )
         }
-        onSyncWhatsappGroups={async () => {
-          const result = await apiFetch<WhatsappGroupsSyncResult>('/api/settings/whatsapp-groups/sync', {
-            method: 'POST',
-          })
-          await refresh()
-          return result
-        }}
+        onWhatsappWebLogout={() =>
+          mutate(() =>
+            apiFetch('/api/settings/whatsapp-web/logout', {
+              method: 'POST',
+            }),
+          )
+        }
+        onWhatsappWebReconnect={() =>
+          mutate(() =>
+            apiFetch('/api/settings/whatsapp-web/reconnect', {
+              method: 'POST',
+            }),
+          )
+        }
       />
     </div>
   )

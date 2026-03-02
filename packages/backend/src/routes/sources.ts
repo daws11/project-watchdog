@@ -2,6 +2,7 @@ import { Router } from "express";
 import { and, eq, ne } from "drizzle-orm";
 import { db } from "../db";
 import { connections, projects } from "../db/schema";
+import { enqueueWhatsappWebCommand } from "../services/whatsapp-web-ingestor";
 
 type ChannelType = "whatsapp" | "google_meet" | "email" | "webhook";
 type ConnectionStatus = "active" | "paused" | "error";
@@ -128,6 +129,17 @@ router.get("/", async (_req, res) => {
   } catch (error) {
     console.error("[Sources] Error fetching data:", error);
     res.status(500).json({ error: "Failed to fetch sources" });
+  }
+});
+
+// POST /api/sources/whatsapp/sync — ask WA ingestor to sync group list
+router.post("/whatsapp/sync", async (_req, res) => {
+  try {
+    const commandId = await enqueueWhatsappWebCommand("sync_groups");
+    return res.status(202).json({ queued: true, commandId });
+  } catch (error) {
+    console.error("[Sources] Error queueing WhatsApp group sync:", error);
+    return res.status(500).json({ error: "Failed to queue WhatsApp group sync" });
   }
 });
 

@@ -12,7 +12,20 @@ interface LoginResponse {
   };
 }
 
-export default function LoginPage() {
+export type CurrentUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "regular";
+  sectionPermissions: string[];
+  assignedPeopleIds: string[];
+};
+
+interface LoginPageProps {
+  onLoginSuccess?: (user: CurrentUser) => void;
+}
+
+export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -40,6 +53,12 @@ export default function LoginPage() {
         }),
       });
       window.localStorage.setItem("auth_token", response.token);
+
+      // Fetch full user profile (sectionPermissions, assignedPeopleIds) and update auth state
+      // so dashboard renders immediately without requiring a page refresh
+      const user = await apiFetch<CurrentUser>("/api/auth/me");
+      onLoginSuccess?.(user);
+
       navigate("/dashboard", { replace: true });
     } catch (submitError) {
       setError((submitError as Error).message);

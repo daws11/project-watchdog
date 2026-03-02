@@ -1,19 +1,19 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import nodemailer from "nodemailer";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   apiKeys,
-  connections,
-  fonnteGroups,
-  projects,
   smtpSettings as smtpSettingsTable,
   tasks,
   users,
 } from "../db/schema";
 import { encryptSecret } from "../utils/crypto";
-import { fonnteService } from "../services/fonnte";
+import {
+  enqueueWhatsappWebCommand,
+  getWhatsappWebStatusView,
+} from "../services/whatsapp-web-ingestor";
 
 type UserRole = "admin" | "regular";
 type UserStatus = "active" | "inactive";
@@ -65,6 +65,21 @@ interface SettingsSnapshot {
   availablePeople: PersonOption[];
 }
 
+interface WhatsappWebSettingsStatus {
+  online: boolean;
+  state:
+    | "starting"
+    | "qr_required"
+    | "authenticated"
+    | "ready"
+    | "disconnected"
+    | "auth_failure"
+    | "error";
+  qr?: string;
+  info?: string;
+  lastHeartbeatAt: string | null;
+}
+
 interface ApiKeyFormData {
   service: string;
   key: string;
@@ -77,18 +92,6 @@ interface UserFormData {
   password?: string;
   sectionPermissions: string[];
   assignedPeopleIds: string[];
-}
-
-interface WhatsappGroupItem {
-  id: string;
-  name: string;
-  imported: boolean;
-  connectionId: string | null;
-}
-
-interface WhatsappGroupsResponse {
-  groups: WhatsappGroupItem[];
-  lastSyncedAt: string | null;
 }
 const SALT_ROUNDS = 10;
 const SMTP_SETTINGS_ID = 1;
@@ -111,58 +114,6 @@ function maskKey(raw: string): string {
 }
 
 const router = Router();
-
-async function ensureDefaultProjectId(): Promise<number> {
-  let project = await db.query.projects.findFirst();
-  if (!project) {
-    const [newProject] = await db
-      .insert(projects)
-      .values({
-        name: "Default Project",
-        healthScore: 100,
-      })
-      .returning();
-    project = newProject;
-  }
-
-  return project.id;
-}
-
-async function getWhatsappGroupsView(): Promise<WhatsappGroupsResponse> {
-  const [dbGroups, whatsappConnections] = await Promise.all([
-    db.select().from(fonnteGroups).orderBy(fonnteGroups.name),
-    db
-      .select({
-        id: connections.id,
-        identifier: connections.identifier,
-      })
-      .from(connections)
-      .where(eq(connections.channelType, "whatsapp")),
-  ]);
-
-  const connectionByIdentifier = new Map(
-    whatsappConnections.map((c) => [c.identifier, c.id]),
-  );
-  const groups: WhatsappGroupItem[] = dbGroups.map((group) => ({
-    id: group.groupId,
-    name: group.name,
-    imported: connectionByIdentifier.has(group.groupId),
-    connectionId: connectionByIdentifier.get(group.groupId)?.toString() ?? null,
-  }));
-
-  const lastSyncedAt =
-    dbGroups.length > 0
-      ? dbGroups
-          .reduce(
-            (latest, current) =>
-              current.lastFetchedAt > latest ? current.lastFetchedAt : latest,
-            dbGroups[0].lastFetchedAt,
-          )
-          .toISOString()
-      : null;
-
-  return { groups, lastSyncedAt };
-}
 
 async function getSmtpSettings(): Promise<SmtpSettings> {
   const existing = await db
@@ -250,103 +201,31 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// GET /api/settings/whatsapp-groups — cached list + import status
-router.get("/whatsapp-groups", async (_req, res) => {
+// GET /api/settings/whatsapp-web — runtime status for WhatsApp Web ingestor
+router.get("/whatsapp-web", (_req, res) => {
+  const status: WhatsappWebSettingsStatus = getWhatsappWebStatusView();
+  res.json(status);
+});
+
+// POST /api/settings/whatsapp-web/logout — queue force re-login command
+router.post("/whatsapp-web/logout", async (_req, res) => {
   try {
-    const view = await getWhatsappGroupsView();
-    res.json(view);
+    const commandId = await enqueueWhatsappWebCommand("logout");
+    res.status(202).json({ queued: true, commandId });
   } catch (error) {
-    console.error("[Settings] Error fetching WhatsApp groups:", error);
-    res.status(500).json({ error: "Failed to fetch WhatsApp groups" });
+    console.error("[Settings] Error queueing WhatsApp logout command:", error);
+    res.status(500).json({ error: "Failed to queue logout command" });
   }
 });
 
-// POST /api/settings/whatsapp-groups/sync — refresh from Fonnte + bulk import all groups
-router.post("/whatsapp-groups/sync", async (_req, res) => {
+// POST /api/settings/whatsapp-web/reconnect — queue reconnect command
+router.post("/whatsapp-web/reconnect", async (_req, res) => {
   try {
-    await fonnteService.updateWhatsappGroupList();
-    const groups = await fonnteService.getWhatsappGroupList();
-    const now = new Date();
-
-    // 1) Cache groups
-    for (const group of groups) {
-      await db
-        .insert(fonnteGroups)
-        .values({
-          groupId: group.id,
-          name: group.name,
-          lastFetchedAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: fonnteGroups.groupId,
-          set: {
-            name: group.name,
-            lastFetchedAt: now,
-            updatedAt: now,
-          },
-        });
-    }
-
-    // 2) Bulk import groups as active WhatsApp connections (skip duplicates)
-    let insertedConnections = 0;
-    let skippedExisting = 0;
-
-    if (groups.length > 0) {
-      const identifiers = groups.map((g) => g.id);
-      const existingConnections = await db
-        .select({
-          identifier: connections.identifier,
-        })
-        .from(connections)
-        .where(
-          and(
-            eq(connections.channelType, "whatsapp"),
-            inArray(connections.identifier, identifiers),
-          ),
-        );
-      const existingIdentifierSet = new Set(
-        existingConnections.map((connection) => connection.identifier),
-      );
-
-      const projectId = await ensureDefaultProjectId();
-      const rowsToInsert = groups
-        .filter((group) => {
-          if (existingIdentifierSet.has(group.id)) {
-            skippedExisting += 1;
-            return false;
-          }
-          return true;
-        })
-        .map((group) => ({
-          projectId,
-          channelType: "whatsapp",
-          label: group.name.trim() || group.id,
-          identifier: group.id,
-          status: "active",
-          lastSyncAt: now,
-          messagesProcessed: 0,
-          reportTime: "18:00",
-        }));
-
-      if (rowsToInsert.length > 0) {
-        const inserted = await db.insert(connections).values(rowsToInsert).returning();
-        insertedConnections = inserted.length;
-      }
-    }
-
-    const view = await getWhatsappGroupsView();
-    res.json({
-      fetchedCount: groups.length,
-      insertedConnections,
-      skippedExisting,
-      ...view,
-    });
+    const commandId = await enqueueWhatsappWebCommand("reconnect");
+    res.status(202).json({ queued: true, commandId });
   } catch (error) {
-    console.error("[Settings] Error syncing WhatsApp groups:", error);
-    const message =
-      error instanceof Error ? error.message : "Failed to sync WhatsApp groups";
-    res.status(500).json({ error: message });
+    console.error("[Settings] Error queueing WhatsApp reconnect command:", error);
+    res.status(500).json({ error: "Failed to queue reconnect command" });
   }
 });
 

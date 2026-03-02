@@ -1,6 +1,5 @@
 export * from "./api_keys";
 export * from "./connections";
-export * from "./fonnte_groups";
 export * from "./messages";
 export * from "./people_settings";
 export * from "./processing_rules";
@@ -11,3 +10,4 @@ export * from "./risks";
 export * from "./smtp_settings";
 export * from "./tasks";
 export * from "./users";
+export * from "./wa_ingestor_commands";

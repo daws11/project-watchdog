@@ -13,6 +13,7 @@
     "db:generate": "pnpm --filter backend db:generate",
     "db:migrate": "pnpm --filter backend db:migrate",
     "db:seed": "pnpm --filter backend db:seed",
+    "db:reset": "pnpm --filter backend db:reset",
     "db:push": "pnpm --filter backend db:push",
     "db:studio": "pnpm --filter backend db:studio"
   },

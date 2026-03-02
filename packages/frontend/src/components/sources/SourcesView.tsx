@@ -109,6 +109,7 @@ export function SourcesView({
   channels,
   connections,
   onChannelClick,
+  onSyncChannel,
   onAddConnection,
   onPauseConnection,
   onResumeConnection,
@@ -122,6 +123,7 @@ export function SourcesView({
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [formLabel, setFormLabel] = useState('')
   const [formIdentifier, setFormIdentifier] = useState('')
+  const [syncing, setSyncing] = useState(false)
 
   const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
   const channelConnections = useMemo(
@@ -148,6 +150,7 @@ export function SourcesView({
     setDeletingId(null)
     setFormLabel('')
     setFormIdentifier('')
+    setSyncing(false)
   }
 
   const startAdd = () => {
@@ -333,13 +336,36 @@ export function SourcesView({
               {/* Modal footer */}
               {!addingTo && !editingId && (
                 <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
-                  <button
-                    onClick={startAdd}
-                    className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg bg-sky-500 dark:bg-sky-600 text-white hover:bg-sky-600 dark:hover:bg-sky-500 transition-colors"
-                  >
-                    <Plus className="size-3.5" strokeWidth={2} />
-                    Add connection
-                  </button>
+                  <div className="flex items-center justify-between gap-3">
+                    {selectedChannel.type === 'whatsapp' && (
+                      <button
+                        onClick={() => {
+                          if (!selectedChannelId || syncing) return
+                          setSyncing(true)
+                          try {
+                            onSyncChannel?.(selectedChannelId)
+                          } finally {
+                            // best-effort UI cooldown; actual refresh handled by parent page
+                            window.setTimeout(() => setSyncing(false), 1500)
+                          }
+                        }}
+                        disabled={syncing}
+                        className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Sync WhatsApp groups from the logged-in WhatsApp Web session"
+                      >
+                        <RotateCcw className="size-3.5" strokeWidth={2} />
+                        {syncing ? 'Syncing…' : 'Sync groups'}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={startAdd}
+                      className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg bg-sky-500 dark:bg-sky-600 text-white hover:bg-sky-600 dark:hover:bg-sky-500 transition-colors"
+                    >
+                      <Plus className="size-3.5" strokeWidth={2} />
+                      Add connection
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

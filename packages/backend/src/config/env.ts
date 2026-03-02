@@ -27,6 +27,8 @@ const envSchema = z.object({
   // Legacy names (kept for backward compatibility):
   FONNTE_API_KEY: z.string().optional().default(""),
   FONNTE_TOKEN: z.string().optional().default(""),
+  // Internal ingestion (whatsapp-web.js)
+  WHATSAPP_INGEST_TOKEN: z.string().optional().default(""),
   JWT_SECRET: z.string().optional().default(""),
   ENCRYPTION_KEY: z.string().optional().default(""),
 });
