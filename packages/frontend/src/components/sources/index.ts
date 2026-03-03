@@ -5,6 +5,7 @@ export type {
   Channel,
   Connection,
   SourcesProps,
+  ProjectOption,
   NewConnectionData,
   EditConnectionData,
 } from './types'

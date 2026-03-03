@@ -6,6 +6,7 @@ import type {
   Connection,
   EditConnectionData,
   NewConnectionData,
+  ProjectOption,
 } from "../components/sources";
 
 interface SourcesData {
@@ -13,8 +14,16 @@ interface SourcesData {
   connections: Connection[];
 }
 
+interface ProjectsData {
+  projects: Array<{
+    id: number;
+    name: string;
+  }>;
+}
+
 export default function SourcesPage() {
   const [data, setData] = useState<SourcesData | null>(null);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -24,9 +33,16 @@ export default function SourcesPage() {
       .catch((err) => setError((err as Error).message));
   }, []);
 
+  const fetchProjects = useCallback(() => {
+    apiFetch<ProjectsData>("/api/projects")
+      .then((data) => setProjects(data.projects))
+      .catch((err) => console.error("Failed to fetch projects:", err));
+  }, []);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    fetchProjects();
+  }, [refresh, fetchProjects]);
 
   const mutate = async (fn: () => Promise<unknown>) => {
     try {
@@ -80,6 +96,7 @@ export default function SourcesPage() {
     <SourcesView
       channels={data.channels}
       connections={data.connections}
+      projects={projects}
       onSyncChannel={syncChannel}
       onAddConnection={(channelId: string, payload: NewConnectionData) =>
         mutate(() =>

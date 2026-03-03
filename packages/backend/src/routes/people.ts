@@ -63,6 +63,35 @@ function parseAliases(input: unknown): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Normalize WhatsApp sender identifier to extract the actual phone number.
+ * Handles various formats:
+ * - 6282295559947@c.us -> 6282295559947
+ * - 6282295559947 -> 6282295559947
+ * - 235828466966677@lid -> null (LID format cannot be converted to phone)
+ */
+function normalizePhoneNumber(sender: string | null | undefined): string {
+  if (!sender) return "";
+
+  // Remove @c.us suffix (regular WhatsApp format)
+  if (sender.endsWith("@c.us")) {
+    return sender.replace("@c.us", "");
+  }
+
+  // Remove @s.whatsapp.net suffix (alternative format)
+  if (sender.endsWith("@s.whatsapp.net")) {
+    return sender.replace("@s.whatsapp.net", "");
+  }
+
+  // LID format (@lid) - privacy-enabled users, cannot extract phone number
+  if (sender.endsWith("@lid")) {
+    return ""; // Cannot convert LID to phone number
+  }
+
+  // Return as-is if no suffix found (assume it's already clean)
+  return sender;
+}
+
 async function getProjectSeverityMap() {
   const rows = await db
     .select({
@@ -104,6 +133,7 @@ async function getPeopleDataset(allowedPersonIds?: Set<string>) {
       projectName: projects.name,
       projectId: tasks.projectId,
       sourceLabel: connections.label,
+      senderPhone: messages.sender, // WhatsApp phone number
     })
     .from(tasks)
     .leftJoin(projects, eq(tasks.projectId, projects.id))
@@ -143,6 +173,7 @@ async function getPeopleDataset(allowedPersonIds?: Set<string>) {
       isOverdue,
       owner,
       updatedAt: row.updatedAt,
+      senderPhone: row.senderPhone, // Include phone number from WhatsApp
     };
   });
 
@@ -168,15 +199,23 @@ async function getPeopleDataset(allowedPersonIds?: Set<string>) {
   for (const task of formattedTasks) {
     const existing = peopleMap.get(task.userId);
     if (!existing) {
+      // Normalize phone number from the message sender (handles @c.us, @lid formats)
+      const phoneNumber = normalizePhoneNumber(task.senderPhone);
+
+      // If owner is "unknown" or empty, use phone number as the name (fallback)
+      const displayName = task.owner && task.owner !== "unknown" && task.owner !== "Unknown"
+        ? task.owner
+        : (phoneNumber || task.owner);
+
       peopleMap.set(task.userId, {
         id: task.userId,
-        name: task.owner,
-        phone: "",
+        name: displayName,
+        phone: phoneNumber,
         email: null,
-        aliases: [],
+        aliases: phoneNumber ? [phoneNumber] : [],
         role: null,
         function: null,
-        identifiersLinked: 1,
+        identifiersLinked: phoneNumber ? 1 : 0,
         taskCounts: { high: 0, medium: 0, low: 0, overdue: 0, total: 0 },
         lastActivityAt: task.updatedAt.toISOString(),
         status: "dormant",
@@ -218,16 +257,20 @@ async function getPeopleDataset(allowedPersonIds?: Set<string>) {
       return person;
     }
 
+    // Normalize phone number from settings (handles @c.us, @lid formats)
+    const settingsPhone = normalizePhoneNumber(settings.phone);
+    const finalPhone = settingsPhone || person.phone;
+
     return {
       ...person,
       name: settings.name ?? person.name,
-      phone: settings.phone ?? person.phone,
+      phone: finalPhone,
       email: settings.email ?? person.email,
       aliases: settings.aliases.length > 0 ? settings.aliases : person.aliases,
       role: settings.roleName ?? person.role,
       function: settings.roleDescription ?? person.function,
       goalStatus: (settings.priorities?.trim() ? "on_goal" : person.goalStatus) as PersonGoalStatus,
-      identifiersLinked: Math.max(1, settings.aliases.length + (settings.email ? 1 : 0) + (settings.phone ? 1 : 0)),
+      identifiersLinked: Math.max(1, settings.aliases.length + (settings.email ? 1 : 0) + (finalPhone ? 1 : 0)),
     };
   });
 

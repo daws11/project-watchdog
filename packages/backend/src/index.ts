@@ -15,6 +15,7 @@ import { dashboardRouter } from "./routes/dashboard";
 import { healthRouter } from "./routes/health";
 import { peopleRouter } from "./routes/people";
 import { processingRouter } from "./routes/processing";
+import { projectsRouter } from "./routes/projects";
 import { reportsRouter } from "./routes/reports";
 import { settingsRouter } from "./routes/settings";
 import { sourcesRouter } from "./routes/sources";
@@ -44,12 +45,20 @@ app.use(requestLogger);
 app.use("/api/dashboard", authenticate, authorizeSection("dashboard"), dashboardRouter);
 app.use("/api/people", authenticate, authorizeSection("people"), peopleRouter);
 app.use("/api/tasks", authenticate, authorizeSection("tasks"), tasksRouter);
+app.use("/api/projects", authenticate, authorizeSection("tasks"), projectsRouter);
 app.use("/api/sources", authenticate, authorizeSection("sources"), sourcesRouter);
 app.use("/api/processing", authenticate, authorizeSection("processing"), processingRouter);
 app.use("/api/reports", authenticate, authorizeSection("reports"), reportsRouter);
 
 // Admin-only routes
 app.use("/api/settings", authenticate, requireAdmin, settingsRouter);
+
+// Development-only test routes
+if (env.NODE_ENV === "development" || env.NODE_ENV === "test") {
+  console.log("[Server] Registering development test routes");
+  const { default: testPromptRouter } = await import("./routes/test-prompt");
+  app.use("/api/test", testPromptRouter);
+}
 
 app.get("/", (_req, res) => {
   res.json({ message: "Project Watchdog API" });

@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Users,
   ListChecks,
+  FolderKanban,
   Inbox,
   Activity,
   Settings,
@@ -28,6 +29,7 @@ export const defaultNavigationItems: NavigationItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'People', href: '/people', icon: Users },
   { label: 'Tasks', href: '/tasks', icon: ListChecks },
+  { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'Sources', href: '/sources', icon: Inbox },
   { label: 'Processing', href: '/processing', icon: Activity },
 ]

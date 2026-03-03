@@ -214,4 +214,295 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /api/tasks/by-project — grouped by project with people aggregation
+router.get("/by-project", async (req, res) => {
+  try {
+    // Get project risk severities
+    const projectRiskRows = await db
+      .select({
+        projectId: risks.projectId,
+        severity: sql<RiskSeverity>`max(case
+          when ${risks.severity} = 'critical' then 'critical'
+          when ${risks.severity} = 'high' then 'high'
+          when ${risks.severity} = 'medium' then 'medium'
+          when ${risks.severity} = 'low' then 'low'
+          else 'none'
+        end)`,
+      })
+      .from(risks)
+      .groupBy(risks.projectId);
+    const riskByProjectId = new Map(
+      projectRiskRows.map((row) => [row.projectId, row.severity ?? "none"]),
+    );
+
+    // Query all tasks with project and source info
+    const joinedTasks = await db
+      .select({
+        owner: tasks.owner,
+        taskId: tasks.id,
+        description: tasks.description,
+        rawStatus: tasks.status,
+        deadline: tasks.deadline,
+        confidence: tasks.confidence,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+        messageId: tasks.messageId,
+        projectId: tasks.projectId,
+        projectName: projects.name,
+        projectHealthScore: projects.healthScore,
+        sourceId: connections.id,
+        sourceLabel: connections.label,
+        sourceChannelType: connections.channelType,
+      })
+      .from(tasks)
+      .leftJoin(projects, eq(tasks.projectId, projects.id))
+      .leftJoin(messages, eq(tasks.messageId, messages.id))
+      .leftJoin(connections, eq(messages.connectionId, connections.id))
+      .orderBy(desc(tasks.createdAt));
+
+    // Get all owners for settings lookup
+    const owners = Array.from(
+      new Set(joinedTasks.map((row) => row.owner).filter((v): v is string => Boolean(v))),
+    );
+
+    const settingsRows =
+      owners.length > 0
+        ? await db
+            .select({
+              personId: peopleSettings.personId,
+              roleName: peopleSettings.roleName,
+              name: peopleSettings.name,
+            })
+            .from(peopleSettings)
+            .where(inArray(peopleSettings.personId, owners.map((owner) => getPersonId(owner))))
+        : [];
+    const settingsByPersonId = new Map(settingsRows.map((row) => [row.personId, row]));
+
+    // Define types for formatted task
+    interface FormattedTask {
+      id: string;
+      userId: string;
+      userName: string;
+      userRole: string;
+      sourceId: string;
+      sourceName: string;
+      sourceType: "whatsapp" | "slack" | "email";
+      title: string;
+      summary: string;
+      priority: TaskPriority;
+      status: TaskStatus;
+      rawStatus: string;
+      dueDate: string | null;
+      confidence: number;
+      projectId: number;
+      projectName: string;
+      sourceReference: string;
+      createdAt: string;
+      isOverdue: boolean;
+    }
+
+    // Format tasks
+    const formattedTasks: FormattedTask[] = joinedTasks.map((row) => {
+      const owner = row.owner ?? "Unknown";
+      const userId = getPersonId(owner);
+      const projectSeverity = riskByProjectId.get(row.projectId) ?? "none";
+      const status = normalizeStatus(row.rawStatus);
+      const isOverdue = Boolean(
+        row.deadline && row.deadline.getTime() < Date.now() && status !== "done",
+      );
+      const priority = getPriority(row.deadline, row.rawStatus, projectSeverity);
+      const personSettings = settingsByPersonId.get(userId);
+      const userName = personSettings?.name ?? owner;
+      const userRole = personSettings?.roleName ?? getRoleLabel(owner);
+
+      return {
+        id: row.taskId.toString(),
+        userId,
+        userName,
+        userRole,
+        sourceId: row.sourceId?.toString() ?? "unknown",
+        sourceName: row.sourceLabel ?? "Unknown Source",
+        sourceType: sourceTypeFromChannel(row.sourceChannelType ?? "unknown"),
+        title: row.description,
+        summary: row.description,
+        priority,
+        status,
+        rawStatus: row.rawStatus,
+        dueDate: row.deadline?.toISOString() ?? null,
+        confidence: row.confidence ?? 1,
+        projectId: row.projectId,
+        projectName: row.projectName ?? "Unknown Project",
+        sourceReference: `${row.projectName ?? "Unknown Project"} · ${row.sourceLabel ?? "Unknown Source"}`,
+        createdAt: row.createdAt.toISOString(),
+        isOverdue,
+      };
+    });
+
+    // Define types for project aggregation
+    interface ProjectPerson {
+      id: string;
+      name: string;
+      role: string;
+      taskCount: number;
+      openTasks: number;
+    }
+
+    interface ProjectGroup {
+      id: number;
+      name: string;
+      healthScore: number;
+      tasks: FormattedTask[];
+      peopleMap: Map<string, ProjectPerson>;
+      taskStats: { open: number; done: number; blocked: number; total: number };
+    }
+
+    // Group tasks by project
+    const projectMap = new Map<number, ProjectGroup>();
+
+    // Build project groups with people aggregation
+    for (const task of formattedTasks) {
+      const projectId = task.projectId;
+
+      if (!projectMap.has(projectId)) {
+        projectMap.set(projectId, {
+          id: projectId,
+          name: task.projectName,
+          healthScore: joinedTasks.find((t) => t.projectId === projectId)?.projectHealthScore ?? 100,
+          tasks: [],
+          peopleMap: new Map(),
+          taskStats: { open: 0, done: 0, blocked: 0, total: 0 },
+        });
+      }
+
+      const projectGroup = projectMap.get(projectId)!;
+      projectGroup.tasks.push(task);
+      projectGroup.taskStats.total++;
+
+      if (task.status === "done") {
+        projectGroup.taskStats.done++;
+      } else if (task.rawStatus === "blocked") {
+        projectGroup.taskStats.blocked++;
+      } else {
+        projectGroup.taskStats.open++;
+      }
+
+      // Aggregate people
+      if (!projectGroup.peopleMap.has(task.userId)) {
+        projectGroup.peopleMap.set(task.userId, {
+          id: task.userId,
+          name: task.userName,
+          role: task.userRole,
+          taskCount: 0,
+          openTasks: 0,
+        });
+      }
+
+      const person = projectGroup.peopleMap.get(task.userId)!;
+      person.taskCount++;
+      if (task.status !== "done") {
+        person.openTasks++;
+      }
+    }
+
+    // Define response project type
+    interface ResponseProject {
+      id: number;
+      name: string;
+      healthScore: number;
+      taskStats: { open: number; done: number; blocked: number; total: number };
+      people: ProjectPerson[];
+      tasks: FormattedTask[];
+    }
+
+    // Format response
+    const responseProjects: ResponseProject[] = Array.from(projectMap.values()).map((projectGroup) => ({
+      id: projectGroup.id,
+      name: projectGroup.name,
+      healthScore: projectGroup.healthScore,
+      taskStats: projectGroup.taskStats,
+      people: Array.from(projectGroup.peopleMap.values()).sort((a, b) => b.taskCount - a.taskCount),
+      tasks: projectGroup.tasks,
+    }));
+
+    // Sort projects by total task count (descending)
+    responseProjects.sort((a, b) => b.taskStats.total - a.taskStats.total);
+
+    // Apply user permissions if needed
+    const allowedPersonIds =
+      req.user?.role === "regular" && req.user.assignedPeopleIds.length > 0
+        ? new Set(req.user.assignedPeopleIds)
+        : undefined;
+
+    const scopedProjects = allowedPersonIds
+      ? responseProjects
+          .map((project) => {
+            const filteredTasks = project.tasks.filter((task) => allowedPersonIds.has(task.userId));
+            const filteredPeopleIds = new Set(filteredTasks.map((t) => t.userId));
+            const filteredPeople = project.people.filter((p) => filteredPeopleIds.has(p.id));
+            return {
+              ...project,
+              tasks: filteredTasks,
+              people: filteredPeople,
+              taskStats: {
+                open: filteredTasks.filter((t) => t.status !== "done" && t.rawStatus !== "blocked").length,
+                done: filteredTasks.filter((t) => t.status === "done").length,
+                blocked: filteredTasks.filter((t) => t.rawStatus === "blocked").length,
+                total: filteredTasks.length,
+              },
+            };
+          })
+          .filter((project) => project.tasks.length > 0)
+      : responseProjects;
+
+    // Get messages for all tasks in projects
+    const allScopedTaskIds = scopedProjects.flatMap((p) => p.tasks.map((t) => parseInt(t.id)));
+    const taskMessages =
+      allScopedTaskIds.length > 0
+        ? await db
+            .select({
+              messageId: messages.id,
+              content: messages.messageText,
+              sender: messages.pushName,
+              senderId: messages.sender,
+              timestamp: messages.createdAt,
+              source: connections.label,
+              taskId: tasks.id,
+            })
+            .from(messages)
+            .leftJoin(tasks, eq(messages.id, tasks.messageId))
+            .leftJoin(connections, eq(messages.connectionId, connections.id))
+            .where(inArray(tasks.id, allScopedTaskIds))
+            .orderBy(desc(messages.createdAt))
+        : [];
+
+    const formattedMessages = taskMessages.map((message) => ({
+      id: message.messageId.toString(),
+      taskId: message.taskId?.toString() || "",
+      content: message.content,
+      sender: message.sender,
+      senderId: message.senderId,
+      timestamp: message.timestamp.toISOString(),
+      source: message.source ?? "Unknown Source",
+      isOriginal: true,
+      personReferences: [],
+    }));
+
+    const chatMessages: Array<{
+      id: string;
+      role: "user" | "assistant";
+      content: string;
+      timestamp: string;
+    }> = [];
+
+    res.json({
+      projects: scopedProjects,
+      messages: formattedMessages,
+      chatMessages,
+    });
+  } catch (error) {
+    console.error("[Tasks] Error fetching grouped data:", error);
+    res.status(500).json({ error: "Failed to fetch grouped tasks data" });
+  }
+});
+
 export { router as tasksRouter };

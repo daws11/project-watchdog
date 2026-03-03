@@ -11,6 +11,7 @@ import HealthPage from "./pages/HealthPage";
 import TasksPage from "./pages/TasksPage";
 import PeoplePage from "./pages/PeoplePage";
 import PersonDetailPage from "./pages/PersonDetailPage";
+import ProjectsPage from "./pages/ProjectsPage";
 import SourcesPage from "./pages/SourcesPage";
 import ProcessingPage from "./pages/ProcessingPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -35,6 +36,7 @@ const SECTION_BY_PATH: Record<string, string> = {
   "/dashboard": "dashboard",
   "/people": "people",
   "/tasks": "tasks",
+  "/projects": "tasks",
   "/sources": "sources",
   "/processing": "processing",
   "/settings": "settings",
@@ -45,6 +47,7 @@ const NAV_ORDER = [
   "/dashboard",
   "/people",
   "/tasks",
+  "/projects",
   "/sources",
   "/processing",
   "/settings",
@@ -150,6 +153,10 @@ export default function App() {
                 <Route
                   path="/tasks"
                   element={canAccess("tasks") ? <TasksPage /> : <Navigate to={fallbackPath} replace />}
+                />
+                <Route
+                  path="/projects"
+                  element={canAccess("tasks") ? <ProjectsPage /> : <Navigate to={fallbackPath} replace />}
                 />
                 <Route
                   path="/sources"

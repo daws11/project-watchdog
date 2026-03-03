@@ -60,15 +60,23 @@ export interface SourcesProps {
   onRetryConnection?: (connectionId: string) => void
 }
 
+/** Project option for dropdown */
+export interface ProjectOption {
+  id: number
+  name: string
+}
+
 /** Data for creating a new connection */
 export interface NewConnectionData {
   label: string
   identifier: string
+  projectId?: number
 }
 
 /** Data for editing an existing connection */
 export interface EditConnectionData {
   label: string
   identifier: string
+  projectId?: number
 }
 

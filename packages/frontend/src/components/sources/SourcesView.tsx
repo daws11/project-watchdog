@@ -23,6 +23,7 @@ import type {
   Connection,
   ChannelType,
   ConnectionStatus,
+  ProjectOption,
 } from './types'
 
 const CHANNEL_ICON: Record<ChannelType, ElementType> = {
@@ -105,9 +106,14 @@ function formatNumber(n: number): string {
   return n.toString()
 }
 
+export interface SourcesViewProps extends SourcesProps {
+  projects: ProjectOption[]
+}
+
 export function SourcesView({
   channels,
   connections,
+  projects,
   onChannelClick,
   onSyncChannel,
   onAddConnection,
@@ -116,13 +122,14 @@ export function SourcesView({
   onEditConnection,
   onDeleteConnection,
   onRetryConnection,
-}: SourcesProps) {
+}: SourcesViewProps) {
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
   const [addingTo, setAddingTo] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [formLabel, setFormLabel] = useState('')
   const [formIdentifier, setFormIdentifier] = useState('')
+  const [formProjectId, setFormProjectId] = useState<string>('')
   const [syncing, setSyncing] = useState(false)
 
   const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
@@ -158,6 +165,7 @@ export function SourcesView({
     setEditingId(null)
     setFormLabel('')
     setFormIdentifier('')
+    setFormProjectId(projects[0]?.id.toString() || '')
   }
 
   const startEdit = (conn: Connection) => {
@@ -165,6 +173,8 @@ export function SourcesView({
     setAddingTo(null)
     setFormLabel(conn.label)
     setFormIdentifier(conn.identifier)
+    // Project ID will be fetched from connection data if available
+    setFormProjectId('')
   }
 
   const cancelForm = () => {
@@ -172,17 +182,26 @@ export function SourcesView({
     setEditingId(null)
     setFormLabel('')
     setFormIdentifier('')
+    setFormProjectId('')
   }
 
   const handleSubmitAdd = () => {
     if (!formLabel.trim() || !formIdentifier.trim() || !addingTo) return
-    onAddConnection?.(addingTo, { label: formLabel.trim(), identifier: formIdentifier.trim() })
+    onAddConnection?.(addingTo, { 
+      label: formLabel.trim(), 
+      identifier: formIdentifier.trim(),
+      projectId: formProjectId ? parseInt(formProjectId) : undefined,
+    })
     cancelForm()
   }
 
   const handleSubmitEdit = () => {
     if (!formLabel.trim() || !formIdentifier.trim() || !editingId) return
-    onEditConnection?.(editingId, { label: formLabel.trim(), identifier: formIdentifier.trim() })
+    onEditConnection?.(editingId, { 
+      label: formLabel.trim(), 
+      identifier: formIdentifier.trim(),
+      projectId: formProjectId ? parseInt(formProjectId) : undefined,
+    })
     cancelForm()
   }
 
@@ -279,8 +298,11 @@ export function SourcesView({
                           channelType={selectedChannel.type}
                           label={formLabel}
                           identifier={formIdentifier}
+                          projectId={formProjectId}
+                          projects={projects}
                           onLabelChange={setFormLabel}
                           onIdentifierChange={setFormIdentifier}
+                          onProjectChange={setFormProjectId}
                           onSubmit={handleSubmitEdit}
                           onCancel={cancelForm}
                           submitLabel="Save"
@@ -322,8 +344,11 @@ export function SourcesView({
                         channelType={selectedChannel.type}
                         label={formLabel}
                         identifier={formIdentifier}
+                        projectId={formProjectId}
+                        projects={projects}
                         onLabelChange={setFormLabel}
                         onIdentifierChange={setFormIdentifier}
+                        onProjectChange={setFormProjectId}
                         onSubmit={handleSubmitAdd}
                         onCancel={cancelForm}
                         submitLabel="Add"
@@ -584,8 +609,11 @@ function ConnectionForm({
   channelType,
   label,
   identifier,
+  projectId,
+  projects,
   onLabelChange,
   onIdentifierChange,
+  onProjectChange,
   onSubmit,
   onCancel,
   submitLabel,
@@ -593,8 +621,11 @@ function ConnectionForm({
   channelType: ChannelType
   label: string
   identifier: string
+  projectId: string
+  projects: ProjectOption[]
   onLabelChange: (v: string) => void
   onIdentifierChange: (v: string) => void
+  onProjectChange: (v: string) => void
   onSubmit: () => void
   onCancel: () => void
   submitLabel: string
@@ -627,6 +658,27 @@ function ConnectionForm({
           className="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-400 transition-colors"
         />
       </div>
+      {projects.length > 0 && (
+        <div>
+          <label className="block text-[11px] font-medium uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            Assign to Project
+          </label>
+          <select
+            value={projectId}
+            onChange={(e) => onProjectChange(e.target.value)}
+            className="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-400 transition-colors cursor-pointer"
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">
+            Messages from this connection will be classified under this project
+          </p>
+        </div>
+      )}
       <div className="flex gap-2 pt-1">
         <button
           onClick={onSubmit}

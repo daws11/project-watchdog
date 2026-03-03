@@ -35,11 +35,13 @@ interface Connection {
 interface NewConnectionData {
   label: string;
   identifier: string;
+  projectId?: number;
 }
 
 interface EditConnectionData {
   label: string;
   identifier: string;
+  projectId?: number;
 }
 
 // Static channel definitions (channel types available)
@@ -152,10 +154,11 @@ router.post("/:channelId/connections", async (req, res) => {
       return res.status(404).json({ error: "Channel not found" });
     }
 
-    const body = req.body as Partial<NewConnectionData>;
+    const body = req.body as Partial<NewConnectionData & { projectId?: number }>;
     const label = typeof body.label === "string" ? body.label.trim() : "";
     const identifier =
       typeof body.identifier === "string" ? body.identifier.trim() : "";
+    const projectId = typeof body.projectId === "number" ? body.projectId : undefined;
 
     if (!label || !identifier) {
       return res
@@ -180,18 +183,27 @@ router.post("/:channelId/connections", async (req, res) => {
       });
     }
 
-    // Create or get default project
-    // TODO: In Phase 4+, allow user to select project
-    let project = await db.query.projects.findFirst();
+    // Use selected project or create/get default
+    let project;
+    if (projectId) {
+      project = await db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+      });
+    }
+    
+    // Fallback to first project or create default
     if (!project) {
-      const [newProject] = await db
-        .insert(projects)
-        .values({
-          name: "Default Project",
-          healthScore: 100,
-        })
-        .returning();
-      project = newProject;
+      project = await db.query.projects.findFirst();
+      if (!project) {
+        const [newProject] = await db
+          .insert(projects)
+          .values({
+            name: "Default Project",
+            healthScore: 100,
+          })
+          .returning();
+        project = newProject;
+      }
     }
 
     const [newConnection] = await db

@@ -6,6 +6,26 @@ export type SourceType = 'whatsapp' | 'slack' | 'email'
 
 export type ChatRole = 'user' | 'assistant'
 
+export interface Project {
+  id: string
+  name: string
+  healthScore: number
+}
+
+export interface ProjectWithTasks extends Project {
+  taskStats: { open: number; done: number; blocked: number; total: number }
+  people: ProjectPerson[]
+  tasks: Task[]
+}
+
+export interface ProjectPerson {
+  id: string
+  name: string
+  role: string
+  taskCount: number
+  openTasks: number
+}
+
 export interface Task {
   id: string
   userId: string
@@ -22,6 +42,10 @@ export interface Task {
   sourceReference: string
   createdAt: string
   isOverdue: boolean
+  // Extended fields for project view
+  projectId?: number
+  projectName?: string
+  rawStatus?: string
 }
 
 export interface PersonSummary {
@@ -71,12 +95,16 @@ export interface PersonSettingsData {
   customPrompt: string
 }
 
+export type ViewMode = 'priority' | 'project'
+
 export interface TasksProps {
   tasks: Task[]
   people: PersonSummary[]
   sources: SourceSummary[]
   messages: TaskMessage[]
   chatMessages: ChatMessage[]
+  viewMode?: ViewMode
+  onViewModeChange?: (mode: ViewMode) => void
   onPersonClick?: (personId: string) => void
   onSavePersonSettings?: (personId: string, data: PersonSettingsData) => void
   onChatSend?: (message: string, taskContext: Task[]) => void

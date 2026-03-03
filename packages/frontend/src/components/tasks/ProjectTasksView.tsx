@@ -1,14 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Search, X, ChevronDown } from 'lucide-react'
-import type {
-  TasksProps,
-  Task,
-  TaskPriority,
-  PersonSummary,
-} from './types'
-import type { PersonSummary as PeoplePersonSummary } from '../people/types'
+import { Search, X, ChevronDown, ChevronRight, FolderKanban } from 'lucide-react'
+import type { Task, ProjectWithTasks, ProjectPerson, TaskMessage, ChatMessage, ViewMode } from './types'
 import { TaskDetailModal } from '../people/TaskDetailModal'
-import { PersonSettings } from '../people/PersonSettings'
 import { DateRangePicker } from '../people/DateRangePicker'
 import { ChatPanel } from './ChatPanel'
 
@@ -37,15 +30,15 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-const PRIORITY_ORDER: TaskPriority[] = ['high', 'medium', 'low']
+const PRIORITY_ORDER: Array<'high' | 'medium' | 'low'> = ['high', 'medium', 'low']
 
-const PRIORITY_STYLE: Record<TaskPriority, { label: string; dot: string; text: string }> = {
+const PRIORITY_STYLE: Record<'high' | 'medium' | 'low', { label: string; dot: string; text: string }> = {
   high: { label: 'High Priority', dot: 'bg-amber-500', text: 'text-amber-600 dark:text-amber-400' },
   medium: { label: 'Medium Priority', dot: 'bg-zinc-400 dark:bg-zinc-500', text: 'text-zinc-600 dark:text-zinc-300' },
   low: { label: 'Low Priority', dot: 'bg-zinc-300 dark:bg-zinc-600', text: 'text-zinc-500 dark:text-zinc-400' },
 }
 
-type PriorityFilter = 'all' | TaskPriority
+type PriorityFilter = 'all' | 'high' | 'medium' | 'low'
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'overdue'
 
 const PRIORITY_FILTERS: { value: PriorityFilter; label: string }[] = [
@@ -62,57 +55,81 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: 'overdue', label: 'Overdue' },
 ]
 
-function toPeoplePersonSummary(p: PersonSummary): PeoplePersonSummary {
-  return {
-    id: p.id,
-    name: p.name,
-    phone: '',
-    email: null,
-    aliases: [],
-    role: p.role,
-    function: null,
-    identifiersLinked: 1,
-    taskCounts: { high: 0, medium: 0, low: 0, overdue: 0, total: 0 },
-    lastActivityAt: new Date().toISOString(),
-    status: 'active',
-    goalStatus: 'on_goal',
-  }
+function getHealthColor(score: number): string {
+  if (score >= 80) return 'text-emerald-500 dark:text-emerald-400'
+  if (score >= 60) return 'text-yellow-500 dark:text-yellow-400'
+  if (score >= 40) return 'text-orange-500 dark:text-orange-400'
+  return 'text-red-500 dark:text-red-400'
+}
+
+function getHealthBg(score: number): string {
+  if (score >= 80) return 'bg-emerald-500'
+  if (score >= 60) return 'bg-yellow-500'
+  if (score >= 40) return 'bg-orange-500'
+  return 'bg-red-500'
 }
 
 /* ── Main Component ── */
 
-export function TasksView({
-  tasks,
-  people,
-  sources,
+interface ProjectTasksViewProps {
+  projects: ProjectWithTasks[]
+  messages: TaskMessage[]
+  chatMessages: ChatMessage[]
+  viewMode?: ViewMode
+  onViewModeChange?: (mode: ViewMode) => void
+  onPersonClick?: (personId: string) => void
+  onChatSend?: (message: string, taskContext: Task[]) => void
+}
+
+export function ProjectTasksView({
+  projects,
   messages,
   chatMessages,
-  viewMode = 'priority',
+  viewMode = 'project',
   onViewModeChange,
-  onPersonClick: _onPersonClick,
-  onSavePersonSettings,
+  onPersonClick,
   onChatSend,
-}: TasksProps) {
-  const [displayMode, setDisplayMode] = useState<'list' | 'kanban'>('list')
+}: ProjectTasksViewProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [personFilter, setPersonFilter] = useState<string>('all')
-  const [sourceFilter, setSourceFilter] = useState<string>('all')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [settingsPersonId, setSettingsPersonId] = useState<string | null>(null)
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => {
+    // Default: expand all projects
+    return new Set(projects.map((p) => p.id))
+  })
 
+  // Get all unique people across projects
+  const allPeople = useMemo(() => {
+    const peopleMap = new Map<string, ProjectPerson>()
+    for (const project of projects) {
+      for (const person of project.people) {
+        if (!peopleMap.has(person.id)) {
+          peopleMap.set(person.id, person)
+        }
+      }
+    }
+    return Array.from(peopleMap.values())
+  }, [projects])
+
+  // Get all due dates
   const taskDueDates = useMemo(() => {
     const dates = new Set<string>()
-    for (const task of tasks) {
-      if (task.dueDate) dates.add(task.dueDate)
+    for (const project of projects) {
+      for (const task of project.tasks) {
+        if (task.dueDate) dates.add(task.dueDate)
+      }
     }
     return dates
-  }, [tasks])
+  }, [projects])
 
-  const hasActiveFilters = searchQuery || priorityFilter !== 'all' || statusFilter !== 'all' || dateFrom || dateTo || personFilter !== 'all' || sourceFilter !== 'all'
+  // Get all tasks count
+  const totalTasks = useMemo(() => projects.reduce((sum, p) => sum + p.tasks.length, 0), [projects])
+
+  const hasActiveFilters = searchQuery || priorityFilter !== 'all' || statusFilter !== 'all' || dateFrom || dateTo || personFilter !== 'all'
 
   const clearFilters = () => {
     setSearchQuery('')
@@ -121,10 +138,10 @@ export function TasksView({
     setDateFrom('')
     setDateTo('')
     setPersonFilter('all')
-    setSourceFilter('all')
   }
 
-  const filteredTasks = useMemo(() => {
+  // Filter tasks per project
+  const filterTasks = (tasks: Task[]): Task[] => {
     let result = tasks
 
     if (searchQuery.trim()) {
@@ -147,31 +164,35 @@ export function TasksView({
     if (personFilter !== 'all') {
       result = result.filter((t) => t.userId === personFilter)
     }
-    if (sourceFilter !== 'all') {
-      result = result.filter((t) => t.sourceId === sourceFilter)
-    }
 
     return result
-  }, [tasks, searchQuery, priorityFilter, statusFilter, dateFrom, dateTo, personFilter, sourceFilter])
+  }
 
-  const tasksByPriority = useMemo(() => {
-    const grouped: Record<TaskPriority, Task[]> = { high: [], medium: [], low: [] }
-    for (const task of filteredTasks) {
-      grouped[task.priority].push(task)
-    }
-    for (const priority of PRIORITY_ORDER) {
-      grouped[priority].sort((a, b) => {
-        if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1
-        if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate)
-        if (a.dueDate) return -1
-        if (b.dueDate) return 1
-        return b.createdAt.localeCompare(a.createdAt)
-      })
-    }
-    return grouped
-  }, [filteredTasks])
+  // Prepare projects with filtered tasks
+  const filteredProjects = useMemo(() => {
+    return projects
+      .map((project) => ({
+        ...project,
+        filteredTasks: filterTasks(project.tasks),
+      }))
+      .filter((project) => project.filteredTasks.length > 0)
+  }, [projects, searchQuery, priorityFilter, statusFilter, dateFrom, dateTo, personFilter])
 
-  const settingsPerson = settingsPersonId ? people.find((p) => p.id === settingsPersonId) ?? null : null
+  // Calculate filtered total
+  const filteredTotal = filteredProjects.reduce((sum, p) => sum + p.filteredTasks.length, 0)
+
+  const toggleProject = (projectId: string) => {
+    const newExpanded = new Set(expandedProjects)
+    if (newExpanded.has(projectId)) {
+      newExpanded.delete(projectId)
+    } else {
+      newExpanded.add(projectId)
+    }
+    setExpandedProjects(newExpanded)
+  }
+
+  const expandAll = () => setExpandedProjects(new Set(filteredProjects.map((p) => p.id)))
+  const collapseAll = () => setExpandedProjects(new Set())
 
   return (
     <div className="h-full flex flex-col" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -187,7 +208,7 @@ export function TasksView({
               Tasks
             </h1>
             <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
-              All tasks across your team
+              Tasks grouped by project
             </p>
           </div>
 
@@ -200,32 +221,27 @@ export function TasksView({
                   className="text-sm font-bold text-zinc-900 dark:text-zinc-100"
                   style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                 >
-                  All Tasks
+                  Projects
                 </h2>
                 <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                  {hasActiveFilters ? `${filteredTasks.length} of ${tasks.length}` : tasks.length}
+                  {filteredProjects.length} projects
+                </span>
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                  {hasActiveFilters ? `${filteredTotal} of ${totalTasks} tasks` : `${totalTasks} tasks`}
                 </span>
               </div>
-              <div className="flex items-center border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs overflow-hidden">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setDisplayMode('list')}
-                  className={`px-3 py-1.5 transition-colors ${
-                    displayMode === 'list'
-                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-medium'
-                      : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
-                  }`}
+                  onClick={expandAll}
+                  className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 px-2 py-1"
                 >
-                  List
+                  Expand All
                 </button>
                 <button
-                  onClick={() => setDisplayMode('kanban')}
-                  className={`px-3 py-1.5 transition-colors ${
-                    displayMode === 'kanban'
-                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-medium'
-                      : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
-                  }`}
+                  onClick={collapseAll}
+                  className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 px-2 py-1"
                 >
-                  Kanban
+                  Collapse All
                 </button>
               </div>
             </div>
@@ -297,23 +313,8 @@ export function TasksView({
                     className="appearance-none text-xs text-zinc-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg pl-3 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/20 cursor-pointer"
                   >
                     <option value="all">All People</option>
-                    {people.map((p) => (
+                    {allPeople.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" strokeWidth={1.5} />
-                </div>
-
-                {/* Source filter dropdown */}
-                <div className="relative">
-                  <select
-                    value={sourceFilter}
-                    onChange={(e) => setSourceFilter(e.target.value)}
-                    className="appearance-none text-xs text-zinc-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg pl-3 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/20 cursor-pointer"
-                  >
-                    <option value="all">All Sources</option>
-                    {sources.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                   <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" strokeWidth={1.5} />
@@ -375,12 +376,12 @@ export function TasksView({
               </div>
             </div>
 
-            {/* Task content */}
-            {tasks.length === 0 ? (
+            {/* Project content */}
+            {projects.length === 0 ? (
               <div className="px-5 py-16 text-center">
-                <p className="text-sm text-zinc-400 dark:text-zinc-500">No tasks in the system.</p>
+                <p className="text-sm text-zinc-400 dark:text-zinc-500">No projects found.</p>
               </div>
-            ) : filteredTasks.length === 0 ? (
+            ) : filteredProjects.length === 0 ? (
               <div className="px-5 py-16 text-center">
                 <p className="text-sm text-zinc-400 dark:text-zinc-500">No tasks match your filters.</p>
                 <button
@@ -390,18 +391,19 @@ export function TasksView({
                   Clear filters
                 </button>
               </div>
-            ) : displayMode === 'list' ? (
-              <ListView
-                tasksByPriority={tasksByPriority}
-                onTaskClick={setSelectedTaskId}
-                onPersonClick={setSettingsPersonId}
-              />
             ) : (
-              <KanbanView
-                tasksByPriority={tasksByPriority}
-                onTaskClick={setSelectedTaskId}
-                onPersonClick={setSettingsPersonId}
-              />
+              <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {filteredProjects.map((project) => (
+                  <ProjectGroup
+                    key={project.id}
+                    project={project}
+                    isExpanded={expandedProjects.has(project.id)}
+                    onToggle={() => toggleProject(project.id)}
+                    onTaskClick={setSelectedTaskId}
+                    onPersonClick={onPersonClick}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -410,13 +412,13 @@ export function TasksView({
       {/* Chat panel */}
       <ChatPanel
         messages={chatMessages}
-        taskCount={filteredTasks.length}
-        onSend={(msg) => onChatSend?.(msg, filteredTasks)}
+        taskCount={filteredTotal}
+        onSend={(msg) => onChatSend?.(msg, filteredProjects.flatMap((p) => p.filteredTasks))}
       />
 
       {/* Task detail modal */}
       {selectedTaskId && (() => {
-        const task = tasks.find((t) => t.id === selectedTaskId)
+        const task = filteredProjects.flatMap((p) => p.tasks).find((t) => t.id === selectedTaskId)
         if (!task) return null
         const taskMessages = messages.filter((m) => m.taskId === selectedTaskId)
         return (
@@ -426,119 +428,200 @@ export function TasksView({
             onClose={() => setSelectedTaskId(null)}
             onPersonReferenceClick={(personId) => {
               setSelectedTaskId(null)
-              setSettingsPersonId(personId)
+              onPersonClick?.(personId)
             }}
           />
         )
       })()}
+    </div>
+  )
+}
 
-      {/* Person settings slide-over */}
-      {settingsPerson && (
-        <PersonSettings
-          person={toPeoplePersonSummary(settingsPerson)}
-          onClose={() => setSettingsPersonId(null)}
-          onSave={(data) => {
-            onSavePersonSettings?.(settingsPerson.id, data)
-            setSettingsPersonId(null)
-          }}
-        />
+/* ── Project Group ── */
+
+interface ProjectGroupProps {
+  project: ProjectWithTasks & { filteredTasks: Task[] }
+  isExpanded: boolean
+  onToggle: () => void
+  onTaskClick: (id: string) => void
+  onPersonClick?: (id: string) => void
+}
+
+function ProjectGroup({ project, isExpanded, onToggle, onTaskClick, onPersonClick }: ProjectGroupProps) {
+  const completedPercent = project.taskStats.total > 0
+    ? Math.round((project.taskStats.done / project.taskStats.total) * 100)
+    : 0
+
+  return (
+    <div className="bg-white dark:bg-zinc-900">
+      {/* Project Header */}
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors text-left"
+      >
+        <div className="flex items-center gap-3">
+          {isExpanded ? (
+            <ChevronDown className="size-4 text-zinc-400" strokeWidth={1.5} />
+          ) : (
+            <ChevronRight className="size-4 text-zinc-400" strokeWidth={1.5} />
+          )}
+          <FolderKanban className="size-5 text-sky-500" strokeWidth={1.5} />
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {project.name}
+            </h3>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                {project.filteredTasks.length} tasks
+              </span>
+              <span className="text-xs text-zinc-300 dark:text-zinc-600">•</span>
+              <span className={`text-xs ${getHealthColor(project.healthScore)}`}>
+                Health {project.healthScore}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          {/* People avatars */}
+          <div className="flex items-center gap-1">
+            {project.people.slice(0, 4).map((person) => (
+              <button
+                key={person.id}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onPersonClick?.(person.id)
+                }}
+                className="size-7 rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center text-[10px] font-medium text-white hover:ring-2 hover:ring-sky-400 transition-all"
+                title={`${person.name} (${person.openTasks} open)`}
+              >
+                {person.name.charAt(0).toUpperCase()}
+              </button>
+            ))}
+            {project.people.length > 4 && (
+              <span className="text-xs text-zinc-400 ml-1">+{project.people.length - 4}</span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          <div className="flex items-center gap-2 min-w-[100px]">
+            <div className="flex-1 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full ${getHealthBg(project.healthScore)} transition-all`}
+                style={{ width: `${completedPercent}%` }}
+              />
+            </div>
+            <span className="text-[11px] text-zinc-400 w-8 text-right">{completedPercent}%</span>
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded Content */}
+      {isExpanded && (
+        <div className="px-5 pb-4">
+          {/* People summary */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {project.people.map((person) => (
+              <button
+                key={person.id}
+                onClick={() => onPersonClick?.(person.id)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-50 dark:bg-zinc-800/50 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <span className="size-5 rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 flex items-center justify-center text-[9px] font-medium text-white">
+                  {person.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="text-xs text-zinc-600 dark:text-zinc-300">{person.name}</span>
+                <span className="text-[10px] text-zinc-400">
+                  {person.openTasks}/{person.taskCount}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Task stats */}
+          <div className="flex items-center gap-4 mb-3 text-xs">
+            <span className="text-zinc-500">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{project.taskStats.open}</span> open
+            </span>
+            <span className="text-zinc-500">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{project.taskStats.done}</span> done
+            </span>
+            <span className="text-zinc-500">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{project.taskStats.blocked}</span> blocked
+            </span>
+          </div>
+
+          {/* Task list */}
+          <div className="space-y-1">
+            {PRIORITY_ORDER.map((priority) => {
+              const tasks = project.filteredTasks.filter((t) => t.priority === priority)
+              if (tasks.length === 0) return null
+              const style = PRIORITY_STYLE[priority]
+
+              return (
+                <div key={priority}>
+                  <div className="flex items-center gap-2 py-2">
+                    <span className={`size-1.5 rounded-full ${style.dot}`} />
+                    <span className={`text-[11px] font-medium ${style.text}`}>
+                      {style.label}
+                    </span>
+                    <span className="text-[11px] text-zinc-400">({tasks.length})</span>
+                  </div>
+                  {tasks.map((task) => (
+                    <ProjectTaskRow
+                      key={task.id}
+                      task={task}
+                      onClick={() => onTaskClick(task.id)}
+                      onPersonClick={() => onPersonClick?.(task.userId)}
+                    />
+                  ))}
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
-/* ── List View ── */
+/* ── Project Task Row ── */
 
-function ListView({
-  tasksByPriority,
-  onTaskClick,
-  onPersonClick,
-}: {
-  tasksByPriority: Record<string, Task[]>
-  onTaskClick?: (id: string) => void
-  onPersonClick?: (id: string) => void
-}) {
-  return (
-    <div>
-      {PRIORITY_ORDER.map((priority) => {
-        const tasks = tasksByPriority[priority]
-        if (tasks.length === 0) return null
-        const style = PRIORITY_STYLE[priority]
-
-        return (
-          <div key={priority}>
-            <div className="flex items-center gap-2 px-5 py-2.5 bg-zinc-50/80 dark:bg-zinc-800/30 border-b border-zinc-200 dark:border-zinc-800">
-              <span className={`size-2 rounded-full ${style.dot}`} />
-              <span className={`text-xs font-semibold uppercase tracking-wider ${style.text}`}>
-                {style.label}
-              </span>
-              <span className="text-xs text-zinc-400 dark:text-zinc-500">{tasks.length}</span>
-            </div>
-            {tasks.map((task, i) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                isLast={i === tasks.length - 1}
-                onClick={() => onTaskClick?.(task.id)}
-                onPersonClick={() => onPersonClick?.(task.userId)}
-              />
-            ))}
-          </div>
-        )
-      })}
-    </div>
-  )
+interface ProjectTaskRowProps {
+  task: Task
+  onClick: () => void
+  onPersonClick: () => void
 }
 
-function TaskRow({
-  task,
-  isLast,
-  onClick,
-  onPersonClick,
-}: {
-  task: Task
-  isLast?: boolean
-  onClick?: () => void
-  onPersonClick?: () => void
-}) {
+function ProjectTaskRow({ task, onClick, onPersonClick }: ProjectTaskRowProps) {
   return (
     <div
-      className={`flex items-start gap-4 px-5 py-3.5 ${
-        !isLast ? 'border-b border-zinc-100 dark:border-zinc-800/40' : ''
-      } hover:bg-zinc-50/50 dark:hover:bg-zinc-800/20 transition-colors`}
+      onClick={onClick}
+      className="flex items-start gap-3 py-2.5 px-3 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors"
     >
-      <button
-        type="button"
-        onClick={onClick}
-        className="flex-1 min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 rounded"
-      >
-        <div className="flex items-center gap-2.5">
-          <span className={`text-sm font-medium ${task.isOverdue ? 'text-red-600 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={`text-sm ${task.isOverdue ? 'text-red-600 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
             {task.title}
           </span>
           {task.isOverdue && (
-            <span className="text-[10px] font-semibold text-red-500 dark:text-red-400 uppercase tracking-wider px-1.5 py-0.5 bg-red-50 dark:bg-red-950/30 rounded">
+            <span className="text-[10px] font-medium text-red-500 dark:text-red-400 uppercase px-1.5 py-0.5 bg-red-50 dark:bg-red-950/30 rounded">
               Overdue
             </span>
           )}
         </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-1">
-          {task.summary}
-        </p>
-        <p className="text-[11px] text-zinc-300 dark:text-zinc-600 mt-1">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-1">
           {task.sourceReference}
         </p>
-      </button>
+      </div>
 
-      {/* Assignee + meta */}
-      <div className="flex items-center gap-4 shrink-0 pt-0.5">
+      <div className="flex items-center gap-3 shrink-0">
         <button
-          type="button"
           onClick={(e) => {
             e.stopPropagation()
-            onPersonClick?.()
+            onPersonClick()
           }}
-          className="text-xs text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline transition-colors truncate max-w-[120px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 rounded"
+          className="text-xs text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline transition-colors"
         >
           {task.userName}
         </button>
@@ -547,121 +630,6 @@ function TaskRow({
             {formatDate(task.dueDate)}
           </span>
         )}
-        <span
-          className="text-xs tabular-nums text-zinc-300 dark:text-zinc-600"
-          style={{ fontFamily: "'JetBrains Mono', monospace" }}
-          title="AI confidence"
-        >
-          {Math.round(task.confidence * 100)}%
-        </span>
-      </div>
-    </div>
-  )
-}
-
-/* ── Kanban View ── */
-
-function KanbanView({
-  tasksByPriority,
-  onTaskClick,
-  onPersonClick,
-}: {
-  tasksByPriority: Record<string, Task[]>
-  onTaskClick?: (id: string) => void
-  onPersonClick?: (id: string) => void
-}) {
-  return (
-    <div className="grid grid-cols-3 divide-x divide-zinc-200 dark:divide-zinc-800">
-      {PRIORITY_ORDER.map((priority) => {
-        const tasks = tasksByPriority[priority]
-        const style = PRIORITY_STYLE[priority]
-
-        return (
-          <div key={priority} className="flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-zinc-50/80 dark:bg-zinc-800/30 border-b border-zinc-200 dark:border-zinc-800">
-              <span className={`size-2 rounded-full ${style.dot}`} />
-              <span className={`text-[11px] font-semibold uppercase tracking-wider ${style.text}`}>
-                {style.label}
-              </span>
-              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">{tasks.length}</span>
-            </div>
-            <div className="p-3 space-y-2 min-h-[120px]">
-              {tasks.length === 0 ? (
-                <p className="text-xs text-zinc-300 dark:text-zinc-600 text-center py-6">No tasks</p>
-              ) : (
-                tasks.map((task) => (
-                  <KanbanCard
-                    key={task.id}
-                    task={task}
-                    onClick={() => onTaskClick?.(task.id)}
-                    onPersonClick={() => onPersonClick?.(task.userId)}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function KanbanCard({
-  task,
-  onClick,
-  onPersonClick,
-}: {
-  task: Task
-  onClick?: () => void
-  onPersonClick?: () => void
-}) {
-  return (
-    <div
-      className={`rounded-lg border p-3.5 transition-shadow hover:shadow-md ${
-        task.isOverdue
-          ? 'border-red-200 dark:border-red-900/40 bg-red-50/50 dark:bg-red-950/10'
-          : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
-      }`}
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 rounded"
-      >
-        <p className={`text-[13px] font-medium leading-snug ${task.isOverdue ? 'text-red-700 dark:text-red-300' : 'text-zinc-900 dark:text-zinc-100'}`}>
-          {task.title}
-        </p>
-        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1.5 line-clamp-2">
-          {task.summary}
-        </p>
-      </button>
-
-      <div className="flex items-center justify-between mt-2.5">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onPersonClick?.()
-          }}
-          className="text-[11px] text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline truncate max-w-[100px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 rounded"
-        >
-          {task.userName}
-        </button>
-        <div className="flex items-center gap-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-          {task.dueDate ? (
-            <span className={task.isOverdue ? 'text-red-500 dark:text-red-400 font-medium' : ''}>
-              {formatDate(task.dueDate)}
-            </span>
-          ) : (
-            <span>No date</span>
-          )}
-          <span
-            className="tabular-nums text-zinc-300 dark:text-zinc-600"
-            style={{ fontFamily: "'JetBrains Mono', monospace" }}
-          >
-            {Math.round(task.confidence * 100)}%
-          </span>
-        </div>
       </div>
     </div>
   )
