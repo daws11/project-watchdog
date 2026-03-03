@@ -2,6 +2,9 @@ import { Router } from "express";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { connections, messages, peopleSettings, projects, risks, tasks } from "../db/schema";
+import { findSimilarTasks, calculateSimilarity } from "../services/task-similarity";
+import { getTaskHistory } from "../services/task-updater";
+import { mergeTasks, getMergeHistory, findMergeCandidates } from "../services/task-merger";
 
 const router = Router();
 
@@ -502,6 +505,151 @@ router.get("/by-project", async (req, res) => {
   } catch (error) {
     console.error("[Tasks] Error fetching grouped data:", error);
     res.status(500).json({ error: "Failed to fetch grouped tasks data" });
+  }
+});
+
+// GET /api/tasks/:id/similar - Find similar tasks
+router.get("/:id/similar", async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id);
+    if (Number.isNaN(taskId)) {
+      return res.status(400).json({ error: "Invalid task ID" });
+    }
+
+    // Get the task to find its project
+    const task = await db.query.tasks.findFirst({
+      where: eq(tasks.id, taskId),
+    });
+
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    // Find similar tasks
+    const similarTasks = await findSimilarTasks(
+      task.projectId,
+      task.description,
+      {
+        threshold: 0.6,
+        maxResults: 5,
+        includeDone: false,
+        includeMerged: false,
+      }
+    );
+
+    // Filter out the task itself
+    const filteredSimilar = similarTasks.filter(
+      (result) => result.existingTask && result.existingTask.id !== taskId
+    );
+
+    // Format response
+    const formattedSimilar = filteredSimilar.map((result) => ({
+      task: result.existingTask,
+      similarityScore: result.similarityScore,
+      matchType: result.matchType,
+    }));
+
+    res.json({
+      taskId,
+      description: task.description,
+      similarTasks: formattedSimilar,
+    });
+  } catch (error) {
+    console.error("[Tasks] Error finding similar tasks:", error);
+    res.status(500).json({ error: "Failed to find similar tasks" });
+  }
+});
+
+// GET /api/tasks/:id/history - Get task evolution history
+router.get("/:id/history", async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id);
+    if (Number.isNaN(taskId)) {
+      return res.status(400).json({ error: "Invalid task ID" });
+    }
+
+    const history = await getTaskHistory(taskId);
+
+    if (!history) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    res.json(history);
+  } catch (error) {
+    console.error("[Tasks] Error fetching task history:", error);
+    res.status(500).json({ error: "Failed to fetch task history" });
+  }
+});
+
+// GET /api/tasks/:id/merge-history - Get merge history untuk task
+router.get("/:id/merge-history", async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id);
+    if (Number.isNaN(taskId)) {
+      return res.status(400).json({ error: "Invalid task ID" });
+    }
+
+    const mergeHistory = await getMergeHistory(taskId);
+
+    res.json(mergeHistory);
+  } catch (error) {
+    console.error("[Tasks] Error fetching merge history:", error);
+    res.status(500).json({ error: "Failed to fetch merge history" });
+  }
+});
+
+// POST /api/tasks/:id/merge - Merge tasks
+router.post("/:id/merge", async (req, res) => {
+  try {
+    const primaryTaskId = parseInt(req.params.id);
+    if (Number.isNaN(primaryTaskId)) {
+      return res.status(400).json({ error: "Invalid task ID" });
+    }
+
+    const { taskIdsToMerge, strategy = "smart_merge", reason } = req.body;
+
+    if (!Array.isArray(taskIdsToMerge) || taskIdsToMerge.length === 0) {
+      return res.status(400).json({ error: "taskIdsToMerge must be a non-empty array" });
+    }
+
+    const result = await mergeTasks(primaryTaskId, taskIdsToMerge, {
+      mergeStrategy: strategy,
+      reason,
+    });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Tasks] Error merging tasks:", error);
+    res.status(500).json({
+      error: "Failed to merge tasks",
+      message: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+// GET /api/tasks/merge-candidates - Find potential merge candidates dalam project
+router.get("/merge-candidates/:projectId", async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    if (Number.isNaN(projectId)) {
+      return res.status(400).json({ error: "Invalid project ID" });
+    }
+
+    const threshold = parseFloat(req.query.threshold as string) || 0.75;
+
+    const candidates = await findMergeCandidates(projectId, threshold);
+
+    res.json({
+      projectId,
+      threshold,
+      candidates,
+    });
+  } catch (error) {
+    console.error("[Tasks] Error finding merge candidates:", error);
+    res.status(500).json({ error: "Failed to find merge candidates" });
   }
 });
 

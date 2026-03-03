@@ -166,3 +166,131 @@ ${formattedMessages}
 
 Extract all actionable tasks from the messages above. Consider the project context when determining confidence scores.`;
 }
+
+// =============================================================================
+// RICH CONTEXT INTERFACES AND PROMPT BUILDER
+// =============================================================================
+
+/**
+ * Enriched project context with all context fields for LLM processing
+ */
+export interface EnrichedProjectContext {
+  name: string;
+  description: string | null;
+  priorities: string | null;
+  customPrompt: string | null;
+}
+
+/**
+ * Enriched connection (group/channel) context with all context fields
+ */
+export interface EnrichedConnectionContext {
+  label: string;
+  description: string | null;
+  priorities: string | null;
+  customPrompt: string | null;
+}
+
+/**
+ * Enriched person context with all context fields
+ */
+export interface EnrichedPersonContext {
+  name: string | null;
+  roleName: string | null;
+  roleDescription: string | null;
+  priorities: string | null;
+  customPrompt: string | null;
+  aliases: string[];
+}
+
+/**
+ * Builds a rich task extraction prompt that includes comprehensive context
+ * from project, connection, and involved people.
+ *
+ * This enhanced prompt helps the LLM:
+ * 1. Better understand the domain and terminology
+ * 2. Identify relevant tasks more accurately
+ * 3. Assign tasks to the right people based on their roles
+ * 4. Consider project priorities when determining task importance
+ */
+export function buildRichTaskExtractionPrompt(
+  project: EnrichedProjectContext,
+  connection: EnrichedConnectionContext | null,
+  people: EnrichedPersonContext[],
+  existingTasks: string[],
+  messages: Array<{ sender: string; text: string; timestamp: Date }>,
+): string {
+  const formattedMessages = messages
+    .map((m) => {
+      const time = m.timestamp.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      return `[${time}] ${m.sender}: ${m.text}`;
+    })
+    .join("\n");
+
+  // Build project context section
+  const projectContextParts = [
+    project.description && `Description: ${project.description}`,
+    project.priorities && `Current Priorities: ${project.priorities}`,
+    project.customPrompt && `Additional Context: ${project.customPrompt}`,
+  ].filter(Boolean);
+
+  const projectContextText =
+    projectContextParts.length > 0
+      ? `\n\n${projectContextParts.join("\n")}`
+      : "";
+
+  // Build connection (group) context section
+  const connectionContextParts = [
+    connection?.description && `About this group: ${connection.description}`,
+    connection?.priorities && `Group Focus: ${connection.priorities}`,
+    connection?.customPrompt && `Group Instructions: ${connection.customPrompt}`,
+  ].filter(Boolean);
+
+  const connectionContextText =
+    connection && connectionContextParts.length > 0
+      ? `\n\nGroup/Channel: ${connection.label}\n${connectionContextParts.join("\n")}`
+      : "";
+
+  // Build people context section
+  const peopleContextText =
+    people.length > 0
+      ? `\n\nPeople involved:\n${people
+          .map((p) => {
+            const parts = [
+              p.roleName && `Role: ${p.roleName}`,
+              p.roleDescription && `${p.roleDescription}`,
+              p.priorities && `Priorities: ${p.priorities}`,
+              p.customPrompt && `Context: ${p.customPrompt}`,
+            ].filter(Boolean);
+
+            const info = parts.length > 0 ? ` (${parts.join("; ")})` : "";
+            return `- ${p.name}${info}`;
+          })
+          .join("\n")}`
+      : "";
+
+  // Build existing tasks section
+  const existingTasksText =
+    existingTasks.length > 0
+      ? `\n\nExisting open tasks:\n${existingTasks.map((t, i) => `${i + 1}. ${t}`).join("\n")}`
+      : "";
+
+  return `Project: ${project.name}${projectContextText}${connectionContextText}${peopleContextText}${existingTasksText}
+
+Recent messages:
+${formattedMessages}
+
+Extract all actionable tasks from the messages above.
+
+Guidelines:
+- Consider the project, group, and people context when determining confidence scores
+- Use people's roles and priorities to better understand task assignments
+- Apply project priorities when determining task importance
+- Consider group-specific instructions and focus areas
+- Filter out casual conversation that is not project-related
+
+Return tasks as JSON array with fields: description, assignee, deadline, confidence.`;
+}

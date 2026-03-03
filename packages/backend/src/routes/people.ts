@@ -403,6 +403,41 @@ router.put("/:personId/settings", async (req, res) => {
     const customPrompt = typeof body.customPrompt === "string" ? body.customPrompt.trim() : null;
     const aliases = parseAliases(body.aliases);
 
+    // Determine which context fields are being updated by user
+    // This allows us to mark them with source='user' to prevent AI overwrite
+    const setClause: Partial<typeof peopleSettings.$inferInsert> = {
+      name,
+      aliases,
+      email,
+      phone,
+      roleName,
+      updatedAt: new Date(),
+    };
+
+    // Only update roleDescription and mark as user-provided if user sent this field
+    if (body.roleDescription !== undefined) {
+      setClause.roleDescription = roleDescription;
+      if (roleDescription) {
+        setClause.roleDescriptionSource = "user";
+      }
+    }
+
+    // Only update priorities and mark as user-provided if user sent this field
+    if (body.priorities !== undefined) {
+      setClause.priorities = priorities;
+      if (priorities) {
+        setClause.prioritiesSource = "user";
+      }
+    }
+
+    // Only update customPrompt and mark as user-provided if user sent this field
+    if (body.customPrompt !== undefined) {
+      setClause.customPrompt = customPrompt;
+      if (customPrompt) {
+        setClause.customPromptSource = "user";
+      }
+    }
+
     const [saved] = await db
       .insert(peopleSettings)
       .values({
@@ -413,22 +448,15 @@ router.put("/:personId/settings", async (req, res) => {
         phone,
         roleName,
         roleDescription,
+        roleDescriptionSource: roleDescription ? "user" : "ai",
         priorities,
+        prioritiesSource: priorities ? "user" : "ai",
         customPrompt,
+        customPromptSource: customPrompt ? "user" : "ai",
       })
       .onConflictDoUpdate({
         target: peopleSettings.personId,
-        set: {
-          name,
-          aliases,
-          email,
-          phone,
-          roleName,
-          roleDescription,
-          priorities,
-          customPrompt,
-          updatedAt: new Date(),
-        },
+        set: setClause,
       })
       .returning();
 
@@ -444,6 +472,11 @@ router.put("/:personId/settings", async (req, res) => {
         roleDescription: saved.roleDescription,
         priorities: saved.priorities,
         customPrompt: saved.customPrompt,
+        contextSources: {
+          roleDescription: saved.roleDescriptionSource,
+          priorities: saved.prioritiesSource,
+          customPrompt: saved.customPromptSource,
+        },
       },
     });
   } catch (error) {

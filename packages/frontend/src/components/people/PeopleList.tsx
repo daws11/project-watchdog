@@ -13,7 +13,7 @@ function matchesSearch(person: PersonSummary, query: string): boolean {
   const q = query.toLowerCase()
   return (
     (person.name?.toLowerCase().includes(q) ?? false) ||
-    person.phone.includes(q) ||
+    (person.phone?.toLowerCase().includes(q) ?? false) ||
     (person.email?.toLowerCase().includes(q) ?? false) ||
     (person.role?.toLowerCase().includes(q) ?? false) ||
     (person.function?.toLowerCase().includes(q) ?? false) ||

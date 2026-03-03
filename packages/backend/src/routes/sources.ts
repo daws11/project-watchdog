@@ -25,6 +25,14 @@ interface Connection {
   channelId: string;
   label: string;
   identifier: string;
+  description: string | null;
+  priorities: string | null;
+  customPrompt: string | null;
+  contextSources: {
+    description: string | null;
+    priorities: string | null;
+    customPrompt: string | null;
+  };
   status: ConnectionStatus;
   lastSyncAt: string;
   messagesProcessed: number;
@@ -104,6 +112,14 @@ function toConnectionResponse(c: typeof connections.$inferSelect): Connection {
     channelId: c.channelType,
     label: c.label,
     identifier: c.identifier,
+    description: c.description,
+    priorities: c.priorities,
+    customPrompt: c.customPrompt,
+    contextSources: {
+      description: c.descriptionSource,
+      priorities: c.prioritiesSource,
+      customPrompt: c.customPromptSource,
+    },
     status: c.status as ConnectionStatus,
     lastSyncAt: c.lastSyncAt?.toISOString() || c.createdAt.toISOString(),
     messagesProcessed: c.messagesProcessed,
@@ -440,6 +456,84 @@ router.delete("/connections/:connectionId", async (req, res) => {
   } catch (error) {
     console.error("[Sources] Error deleting connection:", error);
     res.status(500).json({ error: "Failed to delete connection" });
+  }
+});
+
+// PUT /api/sources/connections/:connectionId/context — update context fields
+router.put("/connections/:connectionId/context", async (req, res) => {
+  try {
+    const connectionId = Number.parseInt(req.params.connectionId, 10);
+    if (Number.isNaN(connectionId)) {
+      return res.status(400).json({ error: "Invalid connection ID" });
+    }
+
+    const body = req.body as {
+      description?: string;
+      priorities?: string;
+      customPrompt?: string;
+    };
+
+    // Check if connection exists
+    const existingConnection = await db.query.connections.findFirst({
+      where: eq(connections.id, connectionId),
+    });
+
+    if (!existingConnection) {
+      return res.status(404).json({ error: "Connection not found" });
+    }
+
+    // Build update values - only update fields that are sent and mark as user-provided
+    const updateValues: Partial<typeof connections.$inferInsert> = {};
+
+    if (body.description !== undefined) {
+      updateValues.description = body.description?.trim() || null;
+      if (body.description?.trim()) {
+        updateValues.descriptionSource = "user";
+      }
+    }
+
+    if (body.priorities !== undefined) {
+      updateValues.priorities = body.priorities?.trim() || null;
+      if (body.priorities?.trim()) {
+        updateValues.prioritiesSource = "user";
+      }
+    }
+
+    if (body.customPrompt !== undefined) {
+      updateValues.customPrompt = body.customPrompt?.trim() || null;
+      if (body.customPrompt?.trim()) {
+        updateValues.customPromptSource = "user";
+      }
+    }
+
+    const [updated] = await db
+      .update(connections)
+      .set(updateValues)
+      .where(eq(connections.id, connectionId))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Connection not found" });
+    }
+
+    const connection: Connection = toConnectionResponse(updated);
+
+    res.json({
+      connection,
+      context: {
+        description: updated.description,
+        priorities: updated.priorities,
+        customPrompt: updated.customPrompt,
+        sources: {
+          description: updated.descriptionSource,
+          priorities: updated.prioritiesSource,
+          customPrompt: updated.customPromptSource,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("[Sources] Error updating connection context:", error);
+    res.status(500).json({ error: "Failed to update connection context" });
   }
 });
 

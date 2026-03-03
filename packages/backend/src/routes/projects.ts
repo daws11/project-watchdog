@@ -14,6 +14,11 @@ router.get("/", async (_req, res) => {
         id: projects.id,
         name: projects.name,
         description: projects.description,
+        priorities: projects.priorities,
+        customPrompt: projects.customPrompt,
+        descriptionSource: projects.descriptionSource,
+        prioritiesSource: projects.prioritiesSource,
+        customPromptSource: projects.customPromptSource,
         healthScore: projects.healthScore,
         createdAt: projects.createdAt,
         updatedAt: projects.updatedAt,
@@ -31,6 +36,13 @@ router.get("/", async (_req, res) => {
       id: project.id,
       name: project.name,
       description: project.description,
+      priorities: project.priorities,
+      customPrompt: project.customPrompt,
+      contextSources: {
+        description: project.descriptionSource,
+        priorities: project.prioritiesSource,
+        customPrompt: project.customPromptSource,
+      },
       healthScore: project.healthScore,
       taskStats: {
         open: project.openTasks,
@@ -98,6 +110,13 @@ router.get("/:id", async (req, res) => {
         id: project.id,
         name: project.name,
         description: project.description,
+        priorities: project.priorities,
+        customPrompt: project.customPrompt,
+        contextSources: {
+          description: project.descriptionSource,
+          priorities: project.prioritiesSource,
+          customPrompt: project.customPromptSource,
+        },
         healthScore: project.healthScore,
         createdAt: project.createdAt.toISOString(),
         updatedAt: project.updatedAt.toISOString(),
@@ -156,7 +175,12 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid project ID" });
     }
 
-    const body = req.body as { name?: string; description?: string };
+    const body = req.body as {
+      name?: string;
+      description?: string;
+      priorities?: string;
+      customPrompt?: string;
+    };
 
     // Check if project exists
     const existingProject = await db.query.projects.findFirst({
@@ -167,8 +191,8 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
 
-    // Build update values
-    const updateValues: { name?: string; description?: string | null } = {};
+    // Build update values - track which fields are being updated by user
+    const updateValues: Partial<typeof projects.$inferInsert> = {};
     
     if (body.name !== undefined) {
       if (typeof body.name !== "string" || body.name.trim().length === 0) {
@@ -177,8 +201,27 @@ router.put("/:id", async (req, res) => {
       updateValues.name = body.name.trim();
     }
     
+    // When user updates a field, mark source as 'user' to prevent AI overwrite
     if (body.description !== undefined) {
       updateValues.description = body.description?.trim() || null;
+      // Only mark as user-provided if there's an actual value
+      if (body.description?.trim()) {
+        updateValues.descriptionSource = "user";
+      }
+    }
+
+    if (body.priorities !== undefined) {
+      updateValues.priorities = body.priorities?.trim() || null;
+      if (body.priorities?.trim()) {
+        updateValues.prioritiesSource = "user";
+      }
+    }
+
+    if (body.customPrompt !== undefined) {
+      updateValues.customPrompt = body.customPrompt?.trim() || null;
+      if (body.customPrompt?.trim()) {
+        updateValues.customPromptSource = "user";
+      }
     }
 
     const [updatedProject] = await db
@@ -203,6 +246,13 @@ router.put("/:id", async (req, res) => {
         id: updatedProject.id,
         name: updatedProject.name,
         description: updatedProject.description,
+        priorities: updatedProject.priorities,
+        customPrompt: updatedProject.customPrompt,
+        contextSources: {
+          description: updatedProject.descriptionSource,
+          priorities: updatedProject.prioritiesSource,
+          customPrompt: updatedProject.customPromptSource,
+        },
         healthScore: updatedProject.healthScore,
         taskStats: taskStats[0] || { open: 0, done: 0, blocked: 0, total: 0 },
         createdAt: updatedProject.createdAt.toISOString(),

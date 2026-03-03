@@ -1,17 +1,25 @@
 import { inArray, eq, and } from "drizzle-orm";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { db } from "../db";
-import { messages, tasks, projects } from "../db/schema";
+import { messages, tasks, projects, connections, peopleSettings } from "../db/schema";
 import {
   taskExtractionSystemPrompt,
   DeadlineExtractionSchema,
-  buildTaskExtractionPrompt,
+  buildRichTaskExtractionPrompt,
   CONFIDENCE_THRESHOLD,
   deadlineParsingGuidelines,
 } from "../prompts/task-extraction";
 import { getQueue } from "../queue";
 import { JobTypes, type ProcessBatchJob, type DetectRisksJob } from "../queue/jobs";
 import { llmChatCompletionsCreate, DEFAULT_MODEL } from "../services/llm";
+import { enrichBatchContext } from "./context-enricher";
+import {
+  findSimilarTask,
+  generateSimilarityHash,
+  shouldAutoUpdate,
+  shouldSuggestMerge,
+} from "../services/task-similarity";
+import { updateExistingTask } from "../services/task-updater";
 
 /**
  * Extract deadline from message text based on task description
@@ -350,7 +358,7 @@ export async function registerTaskExtractor(): Promise<void> {
           return;
         }
 
-        // 2. Fetch project details
+        // 2. Fetch project details with full context
         const project = await db.query.projects.findFirst({
           where: eq(projects.id, projectId),
         });
@@ -362,7 +370,14 @@ export async function registerTaskExtractor(): Promise<void> {
           return;
         }
 
-        // 3. Fetch existing open tasks for context
+        // 3. Fetch connection details with context
+        const connection = connectionId
+          ? await db.query.connections.findFirst({
+              where: eq(connections.id, connectionId),
+            })
+          : null;
+
+        // 4. Fetch existing open tasks for context
         const existingTasks = await db
           .select()
           .from(tasks)
@@ -371,20 +386,69 @@ export async function registerTaskExtractor(): Promise<void> {
 
         const existingTaskDescriptions = existingTasks.map((t) => t.description);
 
-        // 4. Format messages for AI
+        // 5. Get unique senders and fetch their people settings
+        const uniqueSenders = [
+          ...new Set(messageBatch.map((m) => m.pushName).filter(Boolean)),
+        ];
+        const senderPersonIds = uniqueSenders.map((name) =>
+          encodeURIComponent(name.trim().toLowerCase()),
+        );
+
+        const peopleSettingsList =
+          senderPersonIds.length > 0
+            ? await db
+                .select()
+                .from(peopleSettings)
+                .where(inArray(peopleSettings.personId, senderPersonIds))
+            : [];
+
+        const peopleSettingsMap = new Map(
+          peopleSettingsList.map((p) => [p.personId, p]),
+        );
+
+        // 6. Format messages for AI
         const formattedMessages = messageBatch.map((m) => ({
           sender: m.pushName,
           text: m.messageText,
           timestamp: m.fonnteDate,
         }));
 
-        // 5. Call Kimi K2 for task extraction
+        // 7. Build rich context objects
         const projectContext = {
           name: project.name,
           description: project.description,
+          priorities: project.priorities,
+          customPrompt: project.customPrompt,
         };
-        const userPrompt = buildTaskExtractionPrompt(
+
+        const connectionContext = connection
+          ? {
+              label: connection.label,
+              description: connection.description,
+              priorities: connection.priorities,
+              customPrompt: connection.customPrompt,
+            }
+          : null;
+
+        const peopleContext = uniqueSenders.map((senderName) => {
+          const personId = encodeURIComponent(senderName.trim().toLowerCase());
+          const settings = peopleSettingsMap.get(personId);
+
+          return {
+            name: senderName,
+            roleName: settings?.roleName ?? null,
+            roleDescription: settings?.roleDescription ?? null,
+            priorities: settings?.priorities ?? null,
+            customPrompt: settings?.customPrompt ?? null,
+            aliases: settings?.aliases ?? [],
+          };
+        });
+
+        // 8. Call Kimi K2 for task extraction with rich context
+        const userPrompt = buildRichTaskExtractionPrompt(
           projectContext,
+          connectionContext,
+          peopleContext,
           existingTaskDescriptions,
           formattedMessages,
         );
@@ -422,13 +486,15 @@ export async function registerTaskExtractor(): Promise<void> {
           `[TaskExtractor] Extracted ${extractedTasks.tasks.length} tasks, ${filteredTasks.length} passed confidence threshold (${CONFIDENCE_THRESHOLD})`,
         );
 
-        // 6. Insert tasks to database
+        // 6. Process extracted tasks with deduplication
+        let createdCount = 0;
+        let updatedCount = 0;
+        let mergeSuggestionCount = 0;
+
         for (const task of filteredTasks) {
           // Parse deadline using natural language parser
           let deadline = parseNaturalLanguageDeadline(task.deadline);
 
-          // Fallback: if LLM didn't extract deadline but message mentions time patterns,
-          // try to extract from the original message text
           // Fallback: if LLM didn't extract deadline but message mentions time patterns,
           // try to extract from the original message text
           if (!deadline) {
@@ -457,6 +523,48 @@ export async function registerTaskExtractor(): Promise<void> {
             }
           }
 
+          // Check for similar existing tasks
+          const similarityResult = await findSimilarTask(
+            projectId,
+            task.description,
+            { threshold: 0.8, includeDone: false, includeMerged: false }
+          );
+
+          if (shouldAutoUpdate(similarityResult) && similarityResult.existingTask) {
+            // Update existing task with new information
+            const evolution = await updateExistingTask(
+              similarityResult.existingTask.id,
+              {
+                deadline: task.deadline,
+                owner: task.assignee,
+                messageId: messageBatch[0]?.id,
+                confidence: task.confidence,
+              },
+              similarityResult.matchType === 'exact' ? undefined : task.description
+            );
+
+            if (evolution) {
+              updatedCount++;
+              console.log(
+                `[TaskExtractor] Updated task ${similarityResult.existingTask.id}: ${evolution.updatedFields.join(', ')} (match: ${similarityResult.matchType}, score: ${similarityResult.similarityScore.toFixed(2)})`
+              );
+            } else {
+              console.log(
+                `[TaskExtractor] Task ${similarityResult.existingTask.id} already up to date (match: ${similarityResult.matchType})`
+              );
+            }
+            continue;
+          }
+
+          if (shouldSuggestMerge(similarityResult) && similarityResult.existingTask) {
+            // Create new task but flag for potential merge
+            mergeSuggestionCount++;
+            console.log(
+              `[TaskExtractor] Creating task with merge suggestion: similar to ${similarityResult.existingTask.id} (score: ${similarityResult.similarityScore.toFixed(2)})`
+            );
+          }
+
+          // Insert new task
           await db.insert(tasks).values({
             projectId,
             messageId: messageBatch[0]?.id, // Link to first message in batch
@@ -465,25 +573,47 @@ export async function registerTaskExtractor(): Promise<void> {
             deadline,
             status: "open",
             confidence: task.confidence,
+            similarityHash: generateSimilarityHash(task.description),
           });
 
+          createdCount++;
           console.log(
             `[TaskExtractor] Created task: ${task.description.slice(0, 50)}... (confidence: ${task.confidence}, deadline: ${deadline?.toISOString() || "none"})`,
           );
         }
 
-        // 7. Mark messages as processed
+        console.log(
+          `[TaskExtractor] Summary: ${createdCount} created, ${updatedCount} updated, ${mergeSuggestionCount} merge suggestions`
+        );
+
+        // 9. Mark messages as processed
         await db
           .update(messages)
           .set({ processed: true })
           .where(inArray(messages.id, messageIds));
 
-        // 8. Enqueue risk detection job
+        // 10. Enqueue risk detection job
         const riskJob: DetectRisksJob = { projectId };
         await queue.send(JobTypes.DETECT_RISKS, riskJob);
 
+        // 11. Trigger context enrichment (async, non-blocking)
+        const enrichmentMessages = messageBatch.map((m) => ({
+          sender: m.pushName,
+          text: m.messageText,
+        }));
+
+        // Fire and forget - don't await to avoid blocking
+        enrichBatchContext(
+          projectId,
+          connectionId,
+          enrichmentMessages,
+          uniqueSenders,
+        ).catch((error) => {
+          console.error(`[TaskExtractor] Context enrichment failed:`, error);
+        });
+
           console.log(
-            `[TaskExtractor] Completed batch processing, enqueued risk detection`,
+            `[TaskExtractor] Completed batch processing, enqueued risk detection and context enrichment`,
           );
         } catch (error) {
           console.error("[TaskExtractor] Error processing batch:", error);
