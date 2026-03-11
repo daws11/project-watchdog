@@ -14,11 +14,17 @@ type RuntimeState =
   | "auth_failure"
   | "error";
 
-type BackendCommand = "logout" | "reconnect" | "sync_groups";
+type BackendCommand = "logout" | "reconnect" | "sync_groups" | "send_message";
+
+interface SendMessagePayload {
+  groupId: string;
+  messageText: string;
+}
 
 interface CommandEnvelope {
   id: number;
   command: BackendCommand;
+  payload?: SendMessagePayload;
 }
 
 interface StatusPayload {
@@ -26,6 +32,11 @@ interface StatusPayload {
   qr?: string;
   info?: string;
   updatedAtMs: number;
+}
+
+interface AckResult {
+  ok: boolean;
+  error?: string;
 }
 
 function detectChromeExecutable(): string | undefined {
@@ -119,24 +130,54 @@ async function getPendingCommands(): Promise<CommandEnvelope[]> {
     return [];
   }
   const data = (await res.json().catch(() => ({}))) as {
-    commands?: Array<{ id?: number; command?: string }>;
+    commands?: Array<{ id?: number; command?: string; payload?: unknown }>;
   };
   const commands = data.commands ?? [];
   return commands
     .filter(
-      (item): item is { id: number; command: string } =>
+      (item): item is { id: number; command: string; payload?: unknown } =>
         typeof item.id === "number" && typeof item.command === "string",
     )
     .filter(
-      (item): item is CommandEnvelope =>
-        item.command === "logout" ||
-        item.command === "reconnect" ||
-        item.command === "sync_groups",
-    );
+      (item): item is CommandEnvelope => {
+        const validCommand =
+          item.command === "logout" ||
+          item.command === "reconnect" ||
+          item.command === "sync_groups" ||
+          item.command === "send_message";
+
+        if (!validCommand) return false;
+
+        // Validate send_message payload
+        if (item.command === "send_message") {
+          const payload = item.payload as Record<string, unknown> | undefined;
+          const validPayload =
+            payload &&
+            typeof payload.groupId === "string" &&
+            typeof payload.messageText === "string" &&
+            payload.groupId.length > 0 &&
+            payload.messageText.length > 0;
+
+          if (!validPayload) {
+            console.warn(`[WA Ingestor] Skipping send_message ${item.id}: invalid payload`);
+            return false;
+          }
+        }
+
+        return true;
+      },
+    )
+    .map((item) => ({
+      id: item.id,
+      command: item.command as BackendCommand,
+      payload: item.command === "send_message"
+        ? (item.payload as SendMessagePayload)
+        : undefined,
+    }));
 }
 
-async function ackCommand(commandId: number): Promise<void> {
-  await postJson(`${COMMANDS_URL}/${commandId}/ack`, {});
+async function ackCommand(commandId: number, result: AckResult): Promise<void> {
+  await postJson(`${COMMANDS_URL}/${commandId}/ack`, result);
 }
 
 function resolveSessionDir(): string {
@@ -275,6 +316,7 @@ async function main() {
     try {
       const commands = await getPendingCommands();
       for (const command of commands) {
+        let ackResult: AckResult = { ok: true };
         try {
           if (command.command === "logout") {
             console.log("[WA Ingestor] Processing command: logout");
@@ -285,6 +327,7 @@ async function main() {
                 "[WA Ingestor] logout() failed, continue with reinitialize:",
                 logoutError,
               );
+              ackResult = { ok: false, error: String(logoutError) };
             }
             await emitStatus("starting", {
               info: "Logout command received. Reinitializing client.",
@@ -299,6 +342,7 @@ async function main() {
                 "[WA Ingestor] destroy() failed, continue with reinitialize:",
                 destroyError,
               );
+              ackResult = { ok: false, error: String(destroyError) };
             }
             await emitStatus("starting", {
               info: "Reconnect command received. Reinitializing client.",
@@ -329,6 +373,7 @@ async function main() {
                 console.warn(
                   `[WA Ingestor] Group sync failed (${res.status}): ${bodyText}`,
                 );
+                ackResult = { ok: false, error: `Backend returned ${res.status}` };
               } else {
                 console.log(
                   `[WA Ingestor] Group sync pushed: ${groups.length} groups`,
@@ -336,6 +381,32 @@ async function main() {
               }
             } catch (syncError) {
               console.error("[WA Ingestor] sync_groups failed:", syncError);
+              ackResult = { ok: false, error: String(syncError) };
+            }
+          } else if (command.command === "send_message") {
+            const payload = command.payload!;
+            console.log(`[WA Ingestor] Processing command: send_message to ${payload.groupId.slice(0, 20)}...`);
+
+            // Only send if client is ready
+            const state = await client.getState();
+            if (state !== "CONNECTED") {
+              const errorMsg = `Client not connected (state: ${state}). Cannot send message.`;
+              console.warn(`[WA Ingestor] ${errorMsg}`);
+              ackResult = { ok: false, error: errorMsg };
+            } else {
+              try {
+                // Get the chat by ID and send the message
+                const chat = await client.getChatById(payload.groupId);
+                const result = await chat.sendMessage(payload.messageText);
+                console.log(
+                  `[WA Ingestor] Message sent to ${payload.groupId.slice(0, 20)}... (message ID: ${result.id?._serialized?.slice(0, 20) || "unknown"})`,
+                );
+                ackResult = { ok: true };
+              } catch (sendError) {
+                const errorMsg = `Failed to send message: ${String(sendError)}`;
+                console.error(`[WA Ingestor] ${errorMsg}`);
+                ackResult = { ok: false, error: errorMsg };
+              }
             }
           }
         } catch (commandError) {
@@ -343,8 +414,9 @@ async function main() {
             `[WA Ingestor] Failed to execute command ${command.id}:`,
             commandError,
           );
+          ackResult = { ok: false, error: String(commandError) };
         } finally {
-          await ackCommand(command.id);
+          await ackCommand(command.id, ackResult);
         }
       }
     } catch (pollError) {

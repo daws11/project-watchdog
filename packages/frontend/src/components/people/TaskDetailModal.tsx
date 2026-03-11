@@ -3,11 +3,16 @@ import { X, Calendar, TrendingUp, MessageSquare, GitMerge, History, ArrowRightLe
 import type { Task, TaskMessage, TaskPriority, TaskStatus } from '../people/types'
 
 interface SimilarTask {
-  task: Task & {
+  task: {
     id: number
+    description: string
     status: string
+    owner: string | null
+    deadline: string | null
     mergedTaskIds?: number[]
     updateCount?: number
+    title?: string
+    summary?: string
   }
   similarityScore: number
   matchType: string
@@ -543,7 +548,7 @@ export function TaskDetailModal({ task, messages, onClose, onPersonReferenceClic
                   </div>
 
                   <div className="space-y-3">
-                    {similarTasks.map((similar, index) => (
+                    {similarTasks.map((similar) => (
                       <div
                         key={similar.task.id}
                         className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"
@@ -615,6 +620,7 @@ export function TaskDetailModal({ task, messages, onClose, onPersonReferenceClic
               )}
             </>
           )}
+        </div>
       </div>
     </div>
   )

@@ -173,10 +173,8 @@ export async function mergeTasks(
   };
 
   // Collect all merged task IDs (including previously merged ones)
-  const allMergedIds = [
-    ...(primaryTask.mergedTaskIds || []),
-    ...uniqueIdsToMerge,
-  ];
+  const previousMergedIds = (primaryTask.mergedTaskIds || []) as number[];
+  const allMergedIds = [...previousMergedIds, ...uniqueIdsToMerge];
 
   // Update primary task
   await db
@@ -305,10 +303,10 @@ export async function getMergeHistory(
     });
 
     return {
-      primaryTask,
+      primaryTask: null,
       mergedTasks: [],
       isMerged: true,
-      parentTask,
+      parentTask: parentTask ?? null,
     };
   }
 

@@ -16,7 +16,7 @@ export interface SimilarityOptions {
 }
 
 // Normalize text untuk comparison
-function normalizeText(text: string): string {
+export function normalizeText(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^\w\s]/g, " ") // Remove punctuation
@@ -49,7 +49,7 @@ function calculateExactMatch(desc1: string, desc2: string): number {
 }
 
 // Extract keywords dari text (nouns and important words)
-function extractKeywords(text: string): Set<string> {
+export function extractKeywords(text: string): Set<string> {
   const normalized = normalizeText(text);
 
   // Common stop words to exclude

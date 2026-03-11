@@ -6,7 +6,7 @@ import {
   allContextEnrichmentScenarios,
   contextEnrichmentExpected,
   type ContextEnrichmentScenario,
-} from "./fixtures/context-enrichment-scenarios.ts";
+} from "./fixtures/context-enrichment-scenarios";
 import {
   runContextEnrichmentTest,
   seedContextEnrichmentScenario,
@@ -14,7 +14,7 @@ import {
   getEnrichmentDetails,
   logEnrichmentResult,
   type EnrichmentTestResult,
-} from "./utils/context-enrichment-test-utils.ts";
+} from "./utils/context-enrichment-test-utils";
 
 // Store test data for cleanup
 interface TestData {

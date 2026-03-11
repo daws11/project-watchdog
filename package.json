@@ -9,7 +9,6 @@
     "lint": "pnpm run --recursive lint",
     "format": "prettier --write .",
     "predeploy": "pnpm --filter backend predeploy",
-    "fonnte:smoke": "pnpm --filter backend fonnte:smoke --",
     "db:generate": "pnpm --filter backend db:generate",
     "db:migrate": "pnpm --filter backend db:migrate",
     "db:seed": "pnpm --filter backend db:seed",

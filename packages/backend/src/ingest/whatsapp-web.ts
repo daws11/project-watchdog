@@ -181,13 +181,23 @@ router.get("/commands", async (_req, res) => {
   return res.status(200).json({ commands });
 });
 
+const ackBodySchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
 router.post("/commands/:id/ack", async (req, res) => {
-  const parsed = commandAckSchema.safeParse(req.params);
-  if (!parsed.success) {
+  const paramsParsed = commandAckSchema.safeParse(req.params);
+  if (!paramsParsed.success) {
     return res.status(400).json({ error: "Invalid command id" });
   }
 
-  const acked = await ackWhatsappWebCommand(parsed.data.id);
+  const bodyParsed = ackBodySchema.safeParse(req.body);
+  if (!bodyParsed.success) {
+    return res.status(400).json({ error: "Invalid ack body" });
+  }
+
+  const acked = await ackWhatsappWebCommand(paramsParsed.data.id, bodyParsed.data);
   return res.status(200).json({ ok: true, acked });
 });
 

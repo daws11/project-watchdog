@@ -1,190 +1,352 @@
 # Project Watchdog
 
-Boilerplate monorepo berbasis pola InvenFlow:
+An AI-driven project risk intelligence platform that transforms unstructured WhatsApp conversations into structured project insights.
 
-- Frontend: React 18 + Vite + TypeScript + Tailwind CSS
-- Backend: Node.js + Express + TypeScript
-- Database: PostgreSQL + Drizzle ORM
-- Shared package: shared types + Zod schema
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933.svg)](https://nodejs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791.svg)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+## Overview
+
+Project Watchdog monitors WhatsApp group conversations, automatically extracts actionable tasks using AI, detects project risks, generates daily reports, and provides a comprehensive web dashboard for project oversight.
+
+### Key Features
+
+- **WhatsApp Message Integration** - Uses whatsapp-web.js for both inbound message ingestion and outbound sending (daily reports) via a single WhatsApp Web session
+- **AI-Powered Task Extraction** - Uses LLM (OpenAI GPT-4.1 or Moonshot/Kimi K2) to identify tasks, assignees, and deadlines from conversations
+- **Intelligent Risk Detection** - Analyzes task deadlines, stagnation, and blockers to identify project risks
+- **Automated Daily Reports** - Generates narrative summaries and sends them back to WhatsApp groups via the durable outbox (with automatic retry on failure)
+- **Web Dashboard** - React-based interface for managing projects, tasks, people, and monitoring system health
+
+## Tech Stack
+
+### Monorepo Structure
+
+```
+project-watchdog/
+├── packages/
+│   ├── backend/           # Express + TypeScript API
+│   ├── frontend/          # React + Vite + Tailwind CSS
+│   ├── shared/            # Shared types and Zod schemas
+│   └── wa-ingestor/       # WhatsApp Web ingestion service
+├── package.json           # Root workspace configuration
+└── pnpm-workspace.yaml    # pnpm workspace definition
+```
+
+### Backend (`packages/backend/`)
+- **Framework:** Express.js 5.1.0 with TypeScript
+- **Database:** PostgreSQL with Drizzle ORM
+- **Queue System:** pg-boss (PostgreSQL-backed job queue)
+- **AI/LLM:** OpenAI SDK (supports OpenAI and Moonshot/Kimi K2)
+- **Authentication:** JWT + bcrypt
+- **Validation:** Zod
+
+### Frontend (`packages/frontend/`)
+- **Framework:** React 19 with TypeScript
+- **Build Tool:** Vite 7
+- **Styling:** Tailwind CSS 3.4
+- **State Management:** Zustand
+- **Routing:** React Router DOM
+- **Icons:** Lucide React
+
+### WhatsApp Ingestor (`packages/wa-ingestor/`)
+- **Library:** whatsapp-web.js for WhatsApp Web automation
+- **Authentication:** QR code-based login with session persistence
 
 ## Quick Start
 
+### Prerequisites
+
+- Node.js >= 18.0.0
+- pnpm >= 8.0.0
+- PostgreSQL 14+
+
+### Installation
+
+1. **Clone the repository:**
+```bash
+git clone <repository-url>
+cd project-watchdog
+```
+
+2. **Install dependencies:**
 ```bash
 pnpm install
+```
+
+3. **Configure environment variables:**
+```bash
 cp .env.example .env
+# Edit .env with your configuration
+```
+
+4. **Set up the database:**
+```bash
 pnpm db:generate
 pnpm db:migrate
+pnpm db:seed
+```
+
+5. **Start development servers:**
+```bash
 pnpm dev
 ```
 
-## Access
-
+The application will be available at:
 - Frontend: `http://localhost:5173`
-- Backend: `http://localhost:3001`
-- Health API: `http://localhost:3001/api/health`
+- Backend API: `http://localhost:3001`
+- Health Check: `http://localhost:3001/api/health`
 
-## Structure
+## Configuration
 
-```text
-project-watchdog/
-├── packages/
-│   ├── shared/
-│   ├── backend/
-│   └── frontend/
-├── package.json
-└── pnpm-workspace.yaml
+### Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# Database
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/project_watchdog
+
+# Backend
+PORT=3001
+NODE_ENV=development
+
+# Frontend
+VITE_API_URL=http://localhost:3001
+
+# AI / LLM
+# Choose provider: "moonshot" (Kimi) or "openai"
+LLM_PROVIDER=openai
+
+# OpenAI (required when LLM_PROVIDER=openai)
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_DEFAULT_MODEL=gpt-4.1-mini
+OPENAI_ADVANCED_MODEL=gpt-4.1
+
+# Moonshot / Kimi (required when LLM_PROVIDER=moonshot)
+MOONSHOT_API_KEY=your_moonshot_api_key_here
+MOONSHOT_DEFAULT_MODEL=moonshot-v1-32k
+MOONSHOT_ADVANCED_MODEL=moonshot-v1-128k
+
+# WhatsApp Web Integration (whatsapp-web.js)
+WHATSAPP_INGEST_TOKEN=your_internal_ingest_token_here
+BACKEND_INGEST_URL=http://127.0.0.1:3001/ingest/whatsapp-web
+WA_SESSION_DIR=.wa-session
+WA_HEADLESS=true
+
+# Authentication
+JWT_SECRET=your_jwt_secret_here
+ENCRYPTION_KEY=your_32_plus_char_encryption_key_here
+
+# Initial Admin Seeding
+SEED_ADMIN_NAME="Watchdog Admin"
+SEED_ADMIN_EMAIL=admin@watchdog.local
+SEED_ADMIN_PASSWORD=change_me_before_seeding
 ```
 
 ## Common Commands
 
-- `pnpm dev` - run all packages in dev mode
-- `pnpm build` - build all packages
-- `pnpm lint` - lint all packages
-- `pnpm predeploy` - run local pre-deployment checklist checks
-- `pnpm db:generate` - generate drizzle migration files
-- `pnpm db:migrate` - apply drizzle migrations to database
-- `pnpm db:seed` - seed initial admin user from env vars
-- `pnpm db:push` - push schema directly to database
-- `pnpm db:studio` - open drizzle studio
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Run all packages in development mode |
+| `pnpm build` | Build all packages for production |
+| `pnpm lint` | Lint all packages |
+| `pnpm db:generate` | Generate Drizzle migration files |
+| `pnpm db:migrate` | Apply database migrations |
+| `pnpm db:seed` | Seed initial admin user from env vars |
+| `pnpm db:push` | Push schema changes directly to database |
+| `pnpm db:studio` | Open Drizzle Studio for database management |
+| `pnpm predeploy` | Run pre-deployment validation checks |
 
-## Pre-deployment
+## WhatsApp Integration (whatsapp-web.js)
 
-Run local preflight checks before deployment:
+The system uses whatsapp-web.js for all WhatsApp communication - both receiving messages and sending daily reports.
+
+### Architecture
+
+```
+Backend (Workers/Reports)        Backend (Ingest API)              WhatsApp Web Client
+       │                                 │                                  │
+       │  sendMessageToGroup()           │  GET /ingest/whatsapp-web        │
+       │ ──────────────────────────────> │ ──────────────────────────────>  │
+       │                                 │     { commands }                 │  Process commands
+       │                                 │                                  │  (send_message)
+       │                                 │  POST /ingest/whatsapp-web       │
+       │                                 │  (status, messages, acks)         │
+       │                                 │ <──────────────────────────────  │
+       │                                 │                                  │
+```
+
+### Setup
+
+1. Set environment variables for the ingestor:
+   - `WHATSAPP_INGEST_TOKEN` - Internal auth token
+   - `BACKEND_INGEST_URL` - Backend endpoint (default: `http://127.0.0.1:3001/ingest/whatsapp-web`)
+   - `WA_SESSION_DIR` - Session persistence directory (default: `.wa-session`)
+   - `WA_HEADLESS` - Run browser in headless mode (default: `true` for production)
+
+2. Start the development server (`pnpm dev` starts both backend and ingestor)
+
+3. Scan the QR code displayed in terminal on first run
+
+4. Session persists in `WA_SESSION_DIR` for subsequent runs
+
+### Outbound Messaging (Durable Outbox)
+
+The system uses a durable outbox pattern for sending messages:
+- Reports are queued as `send_message` commands in the database
+- Commands include retry logic with exponential backoff (1s, 2s, 4s, 8s, 16s)
+- Max 5 attempts before giving up
+- Failed messages can be inspected via the `wa_ingestor_commands` table
+
+**Admin UI Controls:**
+Navigate to **Settings → WhatsApp Web** to:
+- View runtime status (online/offline, ready/not-ready)
+- Scan QR code for re-authentication
+- Force logout or reconnect
+
+## Pre-Deployment Checklist
+
+Run the pre-deployment validation script before deploying:
 
 ```bash
 pnpm predeploy
 ```
 
-Run strict mode (fails if any warning exists):
+This validates:
+- Database migrations exist and are applied
+- PostgreSQL is reachable
+- JWT_SECRET meets minimum length (32+ characters)
+- LLM API keys are present
+- Fonnte tokens are configured
+- At least one connection exists in the database
 
+For strict mode (fails on any warning):
 ```bash
 pnpm predeploy -- --strict
 ```
 
-What `pnpm predeploy` validates:
-- Drizzle migration files exist in `packages/backend/src/db/migrations`
-- PostgreSQL is reachable via `DATABASE_URL`
-- Drizzle migrations are applied (`__drizzle_migrations`)
-- `JWT_SECRET` exists and has minimum 32 characters
-- LLM key presence based on `LLM_PROVIDER` (`OPENAI_API_KEY` or `MOONSHOT_API_KEY`)
-- Fonnte token presence (outbound + inbound)
-- At least one test connection exists in `connections` table
-- Fonnte webhook URL template is printed for dashboard setup
+## Database Schema
 
-Recommended environment variable minimums:
-- `DATABASE_URL` - valid PostgreSQL connection string
-- `JWT_SECRET` - minimum 32 characters
-- `LLM_PROVIDER` - `"openai"` or `"moonshot"`
-- `OPENAI_API_KEY` - required when `LLM_PROVIDER=openai`
-- `MOONSHOT_API_KEY` - required when `LLM_PROVIDER=moonshot`
-- `FONNTE_API_TOKEN` - required for outbound WhatsApp sends (Fonnte API `Authorization` header)
-- `FONNTE_WEBHOOK_TOKEN` - required for inbound webhook validation
+The system uses 14 core tables:
 
-Fonnte webhook URL format:
+| Table | Purpose |
+|-------|---------|
+| `users` | Admin and manager accounts |
+| `projects` | Project definitions |
+| `connections` | WhatsApp/email/webhook connections |
+| `messages` | Ingested WhatsApp messages |
+| `tasks` | Extracted tasks with confidence scores |
+| `risks` | Detected risks with severity levels |
+| `reports` | Generated daily reports |
+| `processing_rules` | Rules for message processing |
+| `processing_runs` | Processing job tracking |
+| `people_settings` | Personnel configuration |
+| `api_keys` | API key storage |
+| `smtp_settings` | Email configuration |
+| `wa_ingestor_commands` | Commands for WhatsApp ingestor |
 
-```text
-http://<host>:<port>/webhooks/fonnte/receive?token=<FONNTE_WEBHOOK_TOKEN>
-```
+## Workers & Background Jobs
 
-For local webhook testing, expose your backend with a tunnel (for example ngrok or cloudflared) and use the public HTTPS URL in the Fonnte dashboard.
+The system runs several background workers:
 
-## WhatsApp ingestion (whatsapp-web.js, no Docker)
+1. **message-processor** - Processes incoming messages and manages batch windows
+2. **processing-runner** - Runs processing rules on messages
+3. **task-extractor** - Extracts tasks from messages using LLM
+4. **risk-engine** - Analyzes tasks for risks
+5. **report-generator** - Generates daily reports and sends to WhatsApp
 
-This repo can run WhatsApp ingestion without Fonnte inbound webhooks by using a separate process (`packages/wa-ingestor`) powered by `whatsapp-web.js`.
+## API Endpoints
 
-- **Backend endpoint**: `POST /ingest/whatsapp-web` (protected by `X-Ingest-Token`)
-- **Ingestor**: logs into WhatsApp Web, listens for **group text messages**, forwards them to the backend endpoint
-- **Session persistence**: stored in `WA_SESSION_DIR` (default `.wa-session/`, ignored by git)
+### Public Endpoints
+- `POST /api/auth/login` - User authentication
+- `GET /api/health` - System health check
+- `POST /webhooks/fonnte/receive` - Fonnte webhook receiver
 
-### One-time setup (QR login)
+### Protected Endpoints (JWT Required)
+- `GET /api/dashboard` - Dashboard metrics
+- `GET /api/projects` - Project management
+- `GET /api/tasks` - Task CRUD operations
+- `GET /api/people` - People management
+- `GET /api/sources` - Connection management
+- `GET /api/processing` - Processing rules
+- `GET /api/reports` - Report access
+- `GET /api/settings` - Admin settings (admin only)
 
-1. Set these env vars in `.env`:
-   - `WHATSAPP_INGEST_TOKEN`
-   - `BACKEND_INGEST_URL` (default: `http://127.0.0.1:3001/ingest/whatsapp-web`)
-   - `WA_SESSION_DIR` (default: `.wa-session`)
-   - `WA_HEADLESS` (recommended `true` on servers)
-2. Install dependencies:
+For detailed API documentation, see [API.md](./API.md).
 
+## Testing
+
+Run the test suite:
 ```bash
-pnpm install
+pnpm --filter backend test:run
 ```
 
-3. Start backend + ingestor:
-
+Run specific test scenarios:
 ```bash
-pnpm dev
+pnpm --filter backend test:scenario <scenario-name>
 ```
 
-4. In the ingestor logs, scan the QR code once. After that, the session persists on disk and survives restarts.
-
-Notes:
-- If your pnpm is configured to **ignore dependency build scripts**, Puppeteer may not download Chromium. In that case, set `WA_PUPPETEER_EXECUTABLE_PATH` to a system Chrome/Chromium path, or allow the Puppeteer postinstall via `pnpm approve-builds`.
-
-### Run in production with PM2
-
-1. Build packages:
-
+List available test scenarios:
 ```bash
-pnpm build
+pnpm --filter backend test:list
 ```
 
-2. Start both processes:
+## Architecture
 
-```bash
-pm2 start ecosystem.config.cjs
-pm2 logs
+For detailed architecture information, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+```
+WhatsApp Group → whatsapp-web.js → Ingest Handler → Messages Table
+                                 ↑                         ↓
+                                 │              pg-boss Queue ← Message Processor
+                                 │                         ↓
+                                 │           ┌────────────┴────────────┐
+                                 │           ↓                         ↓
+                                 │ Task Extractor (LLM)      Risk Detection Engine
+                                 │           ↓                         ↓
+                                 │      Tasks Table              Risks Table
+                                 │           └────────────┬────────────┘
+                                 │                        ↓
+                                 │           Report Generator (Scheduled)
+                                 │                        ↓
+                                 └─────────── send_message command → Durable Outbox
+                                                          (with retry logic)
 ```
 
-3. Persist PM2 startup (optional):
+## Development Roadmap
 
-```bash
-pm2 save
-pm2 startup
-```
+See [ROADMAP.md](./ROADMAP.md) for detailed development phases and future enhancements.
 
-### Settings UI (QR + control)
+**Current Status:** Phases 1-5 implemented, Phase 6 security hardening complete.
 
-Admin users can open **Settings → WhatsApp Web** to:
-- view runtime status (`online/offline`, state, last heartbeat)
-- see QR code when re-authentication is required
-- trigger **Force re-login** (logout) or **Reconnect**
+## Security Notes
 
-This UI talks to backend admin endpoints:
-- `GET /api/settings/whatsapp-web`
-- `POST /api/settings/whatsapp-web/logout`
-- `POST /api/settings/whatsapp-web/reconnect`
+- Fonnte uses unofficial WhatsApp integration — use a secondary phone number
+- Store all tokens and keys in environment variables
+- JWT secret must be at least 32 characters
+- API keys are encrypted at rest
+- Webhook endpoints validate tokens
+- Rate limiting is applied to prevent abuse
 
-### Cutover checklist (from Fonnte inbound -> whatsapp-web.js)
+## Contributing
 
-- Ensure `connections.identifier` contains the group ids you want (format: `<groupId>@g.us`).
-- Deploy and start backend + `watchdog-wa-ingestor` (PM2).
-- Send a **text message** in a registered group and verify:
-  - ingestor logs show the message was forwarded
-  - backend inserts a row in `messages`
-  - processing continues to produce `tasks`
-- Disable/ignore Fonnte inbound webhook URLs once verified (you can keep Fonnte outbound if still used).
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## Phase 2 Quick Verification (Webhook + Sources)
+## License
 
-1. Ensure env vars are set in `.env`:
-   - `FONNTE_WEBHOOK_TOKEN`
-   - `FONNTE_API_TOKEN`
-2. Start backend (`pnpm dev`) and register a WhatsApp source in `/sources` with identifier format `<groupId>@g.us`.
-3. Configure webhook in Fonnte dashboard:
+This project is licensed under the MIT License.
 
-```text
-https://<public-host>/webhooks/fonnte/receive?token=<FONNTE_WEBHOOK_TOKEN>
-```
+## Support
 
-4. Send a message in the registered group, then verify:
-   - new row exists in `messages`
-   - `connections.last_sync_at` and `connections.messages_processed` are updated
-5. Optional outbound smoke test:
+For issues and feature requests, please use the GitHub issue tracker.
 
-```bash
-pnpm fonnte:smoke -- "<groupId>@g.us" "Watchdog smoke test"
-```
+---
 
-Notes:
-- Legacy env vars are still supported for compatibility: `FONNTE_API_KEY` and `FONNTE_TOKEN`.
-- If you previously used `FONNTE_TOKEN` as the API token for outbound calls, move it to `FONNTE_API_TOKEN` and set a separate `FONNTE_WEBHOOK_TOKEN`.
+**Built with care by the Project Watchdog team.**

@@ -8,7 +8,7 @@ import { registerTaskExtractor } from "./workers/task-extractor";
 import { registerRiskEngine } from "./workers/risk-engine";
 import { registerReportGenerator } from "./workers/report-generator";
 import { authenticate, authorizeSection, requireAdmin } from "./middleware/auth";
-import { validateFonnteWebhook, validateIngestToken } from "./middleware/webhook-auth";
+import { validateIngestToken } from "./middleware/webhook-auth";
 import { requestLogger } from "./middleware/request-logger";
 import { authRouter } from "./routes/auth";
 import { dashboardRouter } from "./routes/dashboard";
@@ -21,7 +21,6 @@ import { settingsRouter } from "./routes/settings";
 import { sourcesRouter } from "./routes/sources";
 import { tasksRouter } from "./routes/tasks";
 import { whatsappWebIngestRouter } from "./ingest/whatsapp-web";
-import { fonnteWebhookRouter } from "./webhooks/fonnte";
 
 const app = express();
 
@@ -32,10 +31,8 @@ app.use(express.json());
 app.use("/api/auth", authRouter);
 app.use("/api/health", healthRouter);
 
-// Webhook routes (separate token-based auth)
-app.use("/webhooks/fonnte", validateFonnteWebhook, fonnteWebhookRouter);
-
-// Internal ingestion routes (shared secret header auth)
+// WhatsApp Web ingestion routes (shared secret header auth)
+// This handles both inbound messages and outbound send command polling
 app.use("/ingest/whatsapp-web", validateIngestToken, whatsappWebIngestRouter);
 
 // Request logging (after auth, so we can log user)

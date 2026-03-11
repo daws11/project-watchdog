@@ -132,14 +132,10 @@ const checkEnvironment = () => {
     addResult("JWT secret", "ok", "JWT_SECRET length is valid (>= 32 chars).");
   }
 
-  const tokenValue = env.FONNTE_WEBHOOK_TOKEN || "<set-FONNTE_WEBHOOK_TOKEN>";
-  const webhookUrl = `http://localhost:${env.PORT}/webhooks/fonnte/receive?token=${tokenValue}`;
-  const webhookDetail = `Configure this URL in Fonnte dashboard: ${webhookUrl}`;
-
-  if (!env.FONNTE_WEBHOOK_TOKEN) {
-    addResult("Fonnte webhook token", "warn", `${webhookDetail} (token is currently missing).`);
+  if (!env.WHATSAPP_INGEST_TOKEN) {
+    addResult("WhatsApp ingest token", "warn", "WHATSAPP_INGEST_TOKEN is missing (required for WhatsApp Web integration).");
   } else {
-    addResult("Fonnte webhook token", "ok", webhookDetail);
+    addResult("WhatsApp ingest token", "ok", "WHATSAPP_INGEST_TOKEN is configured.");
   }
 
   if (env.LLM_PROVIDER === "openai") {

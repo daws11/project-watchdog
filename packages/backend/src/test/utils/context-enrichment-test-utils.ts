@@ -60,7 +60,7 @@ export async function seedContextEnrichmentScenario(
   } = {}
 ): Promise<{
   projectId: number;
-  connectionId: number | null;
+  connectionId: number;
   messageIds: number[];
 }> {
   // Create project if not provided
@@ -88,11 +88,11 @@ export async function seedContextEnrichmentScenario(
     projectId = project.id;
   }
 
-  // Create connection if requested
-  let connectionId: number | null = null;
+  // Create connection if not provided (required for messages)
+  let connectionId: number;
   if (options.connectionId) {
     connectionId = options.connectionId;
-  } else if (scenario.messages.length > 0) {
+  } else {
     const [connection] = await db
       .insert(connections)
       .values({

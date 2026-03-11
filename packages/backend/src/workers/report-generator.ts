@@ -11,7 +11,7 @@ import {
 import { getQueue } from "../queue";
 import { JobTypes, type GenerateReportJob } from "../queue/jobs";
 import { llmChatCompletionsCreate, ADVANCED_MODEL } from "../services/llm";
-import { fonnteService } from "../services/fonnte";
+import { sendMessageToGroup } from "../services/whatsapp-web-ingestor";
 
 const REPORT_TZ = "Asia/Jakarta";
 
@@ -314,16 +314,16 @@ export async function registerReportGenerator(): Promise<void> {
 
         for (const connection of projectConnections) {
           try {
-            await fonnteService.sendMessage(
+            const commandId = await sendMessageToGroup(
               connection.identifier,
               whatsappMessage,
             );
             console.log(
-              `[ReportGenerator] Sent report to WhatsApp group: ${connection.label}`,
+              `[ReportGenerator] Queued report to WhatsApp group: ${connection.label} (command ${commandId})`,
             );
           } catch (error) {
             console.error(
-              `[ReportGenerator] Failed to send report to ${connection.label}:`,
+              `[ReportGenerator] Failed to queue report to ${connection.label}:`,
               error,
             );
           }
