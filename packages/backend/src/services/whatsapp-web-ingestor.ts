@@ -136,23 +136,42 @@ export async function getPendingWhatsappWebCommands(
 ): Promise<CommandRow[]> {
   const now = new Date();
 
-  const rows = await db
-    .select({
-      id: waIngestorCommands.id,
-      command: waIngestorCommands.command,
-      payload: waIngestorCommands.payload,
-      attempts: waIngestorCommands.attempts,
-    })
-    .from(waIngestorCommands)
-    .where(
-      and(
-        isNull(waIngestorCommands.consumedAt),
-        // Either no available_at set OR available_at <= now (ready to process)
-        sql`${waIngestorCommands.availableAt} is null or ${waIngestorCommands.availableAt} <= ${now}`,
-      ),
-    )
-    .orderBy(asc(waIngestorCommands.createdAt))
-    .limit(limit);
+  let rows;
+  try {
+    rows = await db
+      .select({
+        id: waIngestorCommands.id,
+        command: waIngestorCommands.command,
+        payload: waIngestorCommands.payload,
+        attempts: waIngestorCommands.attempts,
+      })
+      .from(waIngestorCommands)
+      .where(
+        and(
+          isNull(waIngestorCommands.consumedAt),
+          // Either no available_at set OR available_at <= now (ready to process).
+          // Wrapped in parentheses so SQL AND/OR precedence doesn't fold the
+          // `consumed_at IS NULL` check into the wrong branch.
+          sql`(${waIngestorCommands.availableAt} is null or ${waIngestorCommands.availableAt} <= ${now})`,
+        ),
+      )
+      .orderBy(asc(waIngestorCommands.createdAt))
+      .limit(limit);
+  } catch (error: unknown) {
+    const err = error as { message?: string; cause?: unknown; code?: string; detail?: string; position?: string };
+    const cause = err.cause as
+      | { message?: string; code?: string; detail?: string; position?: string; where?: string }
+      | undefined;
+    console.error("[WA Ingestor DB] getPendingWhatsappWebCommands failed", {
+      drizzleMessage: err.message?.slice(0, 200),
+      pgCode: cause?.code ?? err.code,
+      pgMessage: cause?.message,
+      pgDetail: cause?.detail ?? err.detail,
+      pgPosition: cause?.position ?? err.position,
+      pgWhere: cause?.where,
+    });
+    throw error;
+  }
 
   const commands: CommandRow[] = [];
   for (const row of rows) {

@@ -7,5 +7,6 @@ dist
 .env.production
 .env.staging
 
-# whatsapp-web.js session (LocalAuth)
+# whatsapp-web.js session (LocalAuth) and web cache
 .wa-session/
+.wwebjs_cache/
