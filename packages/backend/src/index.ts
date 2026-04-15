@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import { env } from "./config/env";
+import { seedLlmProvidersFromEnv } from "./db/seeds/seed-llm-providers";
 import { initializeQueue } from "./queue";
 import { registerMessageProcessor } from "./workers/message-processor";
 import { registerProcessingRunner } from "./workers/processing-runner";
@@ -66,6 +67,13 @@ app.get("/", (_req, res) => {
 
 async function startServer() {
   try {
+    // Seed LLM providers from env on first boot (idempotent no-op after).
+    try {
+      await seedLlmProvidersFromEnv();
+    } catch (error) {
+      console.warn("[Server] LLM provider seed failed (non-fatal):", error);
+    }
+
     // Initialize pg-boss queue
     await initializeQueue();
     console.log("[Server] Queue initialized");

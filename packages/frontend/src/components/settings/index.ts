@@ -13,5 +13,8 @@ export type {
   UserFormData,
   WhatsappWebStatus,
   SettingsProps,
+  LlmProvider,
+  LlmProviderCreate,
+  LlmProviderUpdate,
 } from './types'
 

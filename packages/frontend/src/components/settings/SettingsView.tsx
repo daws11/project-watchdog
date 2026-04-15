@@ -23,6 +23,11 @@ import {
   CircleDot,
   RefreshCcw,
   LogOut,
+  Bot,
+  PlayCircle,
+  Pencil,
+  Zap,
+  ZapOff,
 } from 'lucide-react'
 import type {
   SettingsProps,
@@ -35,6 +40,9 @@ import type {
   UserFormData,
   SectionOption,
   PersonOption,
+  LlmProvider,
+  LlmProviderCreate,
+  LlmProviderUpdate,
 } from './types'
 
 /* ── Shared Styles ── */
@@ -67,6 +75,7 @@ function formatDate(isoString: string): string {
 /* ── Category config ── */
 
 const CATEGORIES: { id: SettingsCategory; label: string; sublabel: string; Icon: React.ElementType }[] = [
+  { id: 'llm_providers', label: 'LLM Providers', sublabel: 'OpenAI-compatible endpoints', Icon: Bot },
   { id: 'api_keys', label: 'API Keys', sublabel: 'External service credentials', Icon: Key },
   { id: 'smtp', label: 'SMTP', sublabel: 'Outgoing email config', Icon: Mail },
   { id: 'users', label: 'Users', sublabel: 'Accounts & permissions', Icon: Users },
@@ -82,6 +91,7 @@ export function SettingsView({
   availableSections,
   availablePeople,
   whatsappWebStatus,
+  llmProviders,
   onAddApiKey,
   onDeleteApiKey,
   onSaveSmtp,
@@ -92,8 +102,13 @@ export function SettingsView({
   onReactivateUser,
   onWhatsappWebLogout,
   onWhatsappWebReconnect,
+  onCreateLlmProvider,
+  onUpdateLlmProvider,
+  onDeleteLlmProvider,
+  onActivateLlmProvider,
+  onTestLlmProvider,
 }: SettingsProps) {
-  const [category, setCategory] = useState<SettingsCategory>('api_keys')
+  const [category, setCategory] = useState<SettingsCategory>('llm_providers')
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -154,6 +169,16 @@ export function SettingsView({
 
           {/* Right content area */}
           <div className="flex-1 min-w-0 overflow-y-auto">
+            {category === 'llm_providers' && (
+              <LlmProvidersPanel
+                providers={llmProviders}
+                onCreate={onCreateLlmProvider}
+                onUpdate={onUpdateLlmProvider}
+                onDelete={onDeleteLlmProvider}
+                onActivate={onActivateLlmProvider}
+                onTest={onTestLlmProvider}
+              />
+            )}
             {category === 'api_keys' && (
               <ApiKeysPanel apiKeys={apiKeys} onAdd={onAddApiKey} onDelete={onDeleteApiKey} />
             )}
@@ -333,6 +358,345 @@ function ApiKeysPanel({
               </div>
             )
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── LLM Providers Panel ── */
+
+interface LlmProviderFormState {
+  name: string
+  baseUrl: string
+  apiKey: string
+  defaultModel: string
+  advancedModel: string
+}
+
+const EMPTY_PROVIDER_FORM: LlmProviderFormState = {
+  name: '',
+  baseUrl: '',
+  apiKey: '',
+  defaultModel: '',
+  advancedModel: '',
+}
+
+function LlmProvidersPanel({
+  providers,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onActivate,
+  onTest,
+}: {
+  providers: LlmProvider[]
+  onCreate?: (data: LlmProviderCreate) => Promise<void> | void
+  onUpdate?: (id: number, data: LlmProviderUpdate) => Promise<void> | void
+  onDelete?: (id: number) => Promise<void> | void
+  onActivate?: (id: number) => Promise<void> | void
+  onTest?: (id: number) => Promise<{ ok: boolean; latencyMs: number; error?: string }>
+}) {
+  const [mode, setMode] = useState<{ kind: 'idle' } | { kind: 'add' } | { kind: 'edit'; id: number }>({ kind: 'idle' })
+  const [form, setForm] = useState<LlmProviderFormState>(EMPTY_PROVIDER_FORM)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [testingId, setTestingId] = useState<number | null>(null)
+  const [testResult, setTestResult] = useState<Record<number, { ok: boolean; latencyMs: number; error?: string }>>({})
+
+  const startAdd = () => {
+    setForm(EMPTY_PROVIDER_FORM)
+    setMode({ kind: 'add' })
+  }
+
+  const startEdit = (p: LlmProvider) => {
+    setForm({
+      name: p.name,
+      baseUrl: p.baseUrl ?? '',
+      apiKey: '',
+      defaultModel: p.defaultModel,
+      advancedModel: p.advancedModel,
+    })
+    setMode({ kind: 'edit', id: p.id })
+  }
+
+  const cancelForm = () => {
+    setMode({ kind: 'idle' })
+    setForm(EMPTY_PROVIDER_FORM)
+  }
+
+  const canSubmit = (() => {
+    if (!form.name.trim() || !form.defaultModel.trim() || !form.advancedModel.trim()) return false
+    if (mode.kind === 'add' && form.apiKey.trim().length < 10) return false
+    return true
+  })()
+
+  const submit = async () => {
+    if (!canSubmit) return
+    const base: LlmProviderUpdate = {
+      name: form.name.trim(),
+      baseUrl: form.baseUrl.trim() === '' ? null : form.baseUrl.trim(),
+      defaultModel: form.defaultModel.trim(),
+      advancedModel: form.advancedModel.trim(),
+    }
+    if (form.apiKey.trim().length > 0) {
+      base.apiKey = form.apiKey.trim()
+    }
+    if (mode.kind === 'add') {
+      await onCreate?.(base as LlmProviderCreate)
+    } else if (mode.kind === 'edit') {
+      await onUpdate?.(mode.id, base)
+    }
+    cancelForm()
+  }
+
+  const handleDelete = async (id: number) => {
+    await onDelete?.(id)
+    setDeletingId(null)
+  }
+
+  const handleTest = async (id: number) => {
+    if (!onTest) return
+    setTestingId(id)
+    try {
+      const result = await onTest(id)
+      setTestResult((prev) => ({ ...prev, [id]: result }))
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2
+            className="text-base font-bold text-zinc-900 dark:text-zinc-100"
+            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+          >
+            LLM Providers
+          </h2>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+            OpenAI Chat Completions compatible endpoints. One provider is active at a time.
+          </p>
+        </div>
+        {mode.kind === 'idle' && (
+          <button onClick={startAdd} className={BTN_PRIMARY}>
+            <Plus className="size-3.5" strokeWidth={2} />
+            Add provider
+          </button>
+        )}
+      </div>
+
+      {/* Add / Edit form */}
+      {mode.kind !== 'idle' && (
+        <div className="rounded-lg border border-sky-200 dark:border-sky-500/20 bg-sky-50/50 dark:bg-sky-500/5 p-4 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            {mode.kind === 'add' ? (
+              <>
+                <Plus className="size-3.5 text-sky-500" strokeWidth={2} />
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">New LLM Provider</span>
+              </>
+            ) : (
+              <>
+                <Pencil className="size-3.5 text-sky-500" strokeWidth={2} />
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Edit Provider</span>
+              </>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className={LABEL}>Name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="OpenAI Prod / OpenRouter / Moonshot"
+                className={INPUT}
+              />
+            </div>
+            <div className="col-span-2">
+              <label className={LABEL}>Base URL (leave empty for OpenAI default)</label>
+              <input
+                type="text"
+                value={form.baseUrl}
+                onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+                placeholder="https://api.openai.com/v1"
+                className={INPUT}
+              />
+            </div>
+            <div className="col-span-2">
+              <label className={LABEL}>
+                API Key {mode.kind === 'edit' && <span className="normal-case text-zinc-400">(leave empty to keep existing)</span>}
+              </label>
+              <input
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+                placeholder="sk-..."
+                className={INPUT}
+              />
+            </div>
+            <div>
+              <label className={LABEL}>Default model</label>
+              <input
+                type="text"
+                value={form.defaultModel}
+                onChange={(e) => setForm({ ...form, defaultModel: e.target.value })}
+                placeholder="gpt-4.1-mini"
+                className={INPUT}
+              />
+            </div>
+            <div>
+              <label className={LABEL}>Advanced model</label>
+              <input
+                type="text"
+                value={form.advancedModel}
+                onChange={(e) => setForm({ ...form, advancedModel: e.target.value })}
+                placeholder="gpt-4.1"
+                className={INPUT}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={submit}
+              disabled={!canSubmit}
+              className={`${BTN_PRIMARY} disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              {mode.kind === 'add' ? 'Create provider' : 'Save changes'}
+            </button>
+            <button onClick={cancelForm} className={BTN_GHOST}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Providers list */}
+      {providers.length === 0 && mode.kind === 'idle' ? (
+        <div className="py-16 text-center">
+          <div className="inline-flex items-center justify-center size-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 mb-3">
+            <Bot className="size-5" strokeWidth={1.5} />
+          </div>
+          <p className="text-sm text-zinc-400 dark:text-zinc-500">No LLM providers configured</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
+            Add one to let workers call an OpenAI-compatible LLM endpoint.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {providers.map((p) => {
+            if (deletingId === p.id) {
+              return (
+                <div key={p.id} className="rounded-lg border border-red-200 dark:border-red-500/20 bg-red-50/50 dark:bg-red-500/5 p-4">
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300 mb-3">
+                    Delete provider <span className="font-semibold">{p.name}</span>? Encrypted key will be removed permanently.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      className="px-3 py-1.5 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+                    >
+                      Delete provider
+                    </button>
+                    <button onClick={() => setDeletingId(null)} className={BTN_GHOST}>Cancel</button>
+                  </div>
+                </div>
+              )
+            }
+
+            const lastTest = testResult[p.id]
+            return (
+              <div
+                key={p.id}
+                className={`group px-4 py-3.5 rounded-lg border transition-all ${
+                  p.isActive
+                    ? 'border-emerald-300 dark:border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-500/5'
+                    : 'border-zinc-100 dark:border-zinc-800/80 hover:border-zinc-200 dark:hover:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex items-center justify-center size-8 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-sky-500">
+                    <Bot className="size-4" strokeWidth={1.5} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                        {p.name}
+                      </span>
+                      {p.isActive && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                          <Zap className="size-3" strokeWidth={2} />
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-zinc-500 dark:text-zinc-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                      <span className="font-mono">{p.maskedKey}</span>
+                      <span className="truncate max-w-[280px]">{p.baseUrl ?? 'https://api.openai.com/v1 (default)'}</span>
+                      <span>default: <span className="text-zinc-600 dark:text-zinc-400">{p.defaultModel}</span></span>
+                      <span>advanced: <span className="text-zinc-600 dark:text-zinc-400">{p.advancedModel}</span></span>
+                      {p.lastUsedAt && <span>last used {formatRelativeTime(p.lastUsedAt)}</span>}
+                    </div>
+                    {(lastTest || p.lastTestAt) && (
+                      <div className="mt-1 text-[11px]">
+                        {lastTest ? (
+                          lastTest.ok ? (
+                            <span className="text-emerald-600 dark:text-emerald-400">
+                              ✓ Test OK ({lastTest.latencyMs}ms)
+                            </span>
+                          ) : (
+                            <span className="text-red-600 dark:text-red-400" title={lastTest.error}>
+                              ✕ Test failed: {lastTest.error?.slice(0, 80)}
+                            </span>
+                          )
+                        ) : p.lastTestOk ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            ✓ Last test {formatRelativeTime(p.lastTestAt!)}
+                          </span>
+                        ) : (
+                          <span className="text-red-600 dark:text-red-400" title={p.lastTestError ?? undefined}>
+                            ✕ Last test failed {formatRelativeTime(p.lastTestAt!)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleTest(p.id)}
+                      disabled={testingId === p.id}
+                      title="Test connection"
+                      className="p-1.5 rounded-md text-zinc-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors disabled:opacity-40"
+                    >
+                      <PlayCircle className="size-4" strokeWidth={1.5} />
+                    </button>
+                    {!p.isActive && (
+                      <button
+                        onClick={() => onActivate?.(p.id)}
+                        title="Activate this provider"
+                        className="p-1.5 rounded-md text-zinc-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors"
+                      >
+                        <ZapOff className="size-4" strokeWidth={1.5} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => startEdit(p)}
+                      title="Edit"
+                      className="p-1.5 rounded-md text-zinc-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
+                    >
+                      <Pencil className="size-4" strokeWidth={1.5} />
+                    </button>
+                    <button
+                      onClick={() => setDeletingId(p.id)}
+                      title="Delete"
+                      className="p-1.5 rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                    >
+                      <Trash2 className="size-4" strokeWidth={1.5} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

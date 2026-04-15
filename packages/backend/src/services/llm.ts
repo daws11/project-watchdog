@@ -2,45 +2,34 @@ import OpenAI from "openai";
 import { desc, eq } from "drizzle-orm";
 import { env } from "../config/env";
 import { db } from "../db";
-import { apiKeys } from "../db/schema";
+import { apiKeys, llmProviders } from "../db/schema";
 import { decryptSecret } from "../utils/crypto";
 
-export type LlmProvider = "moonshot" | "openai";
+// Sentinel strings used by callers as `model: DEFAULT_MODEL` / `model: ADVANCED_MODEL`.
+// `llmChatCompletionsCreate` intercepts these and swaps them for the real model
+// name of the currently active provider at call time. Plain literal strings stay
+// untouched and pass through — existing tests keep working.
+export const DEFAULT_MODEL = "__provider_default__" as const;
+export const ADVANCED_MODEL = "__provider_advanced__" as const;
 
-export const LLM_PROVIDER: LlmProvider = env.LLM_PROVIDER;
+export type LegacyLlmProvider = "moonshot" | "openai";
 
-type ProviderConfig = {
-  dbServiceName: string;
-  baseURL?: string;
+interface ResolvedProvider {
+  id: number | null; // null = env fallback
+  source: "db" | "env";
+  name: string;
+  baseUrl: string | null;
+  apiKey: string;
   defaultModel: string;
   advancedModel: string;
-};
+}
 
-const PROVIDERS: Record<LlmProvider, ProviderConfig> = {
-  moonshot: {
-    dbServiceName: "moonshot",
-    baseURL: "https://api.moonshot.cn/v1",
-    defaultModel: env.MOONSHOT_DEFAULT_MODEL,
-    advancedModel: env.MOONSHOT_ADVANCED_MODEL,
-  },
-  openai: {
-    dbServiceName: "openai",
-    defaultModel: env.OPENAI_DEFAULT_MODEL,
-    advancedModel: env.OPENAI_ADVANCED_MODEL,
-  },
-};
+let cachedProvider: (ResolvedProvider & { expiresAtMs: number }) | null = null;
+const CACHE_TTL_MS = 60_000;
 
-export const DEFAULT_MODEL = PROVIDERS[LLM_PROVIDER].defaultModel;
-export const ADVANCED_MODEL = PROVIDERS[LLM_PROVIDER].advancedModel;
-
-type ResolvedKey = {
-  keyId: number | null;
-  apiKey: string;
-};
-
-let cachedKey:
-  | (ResolvedKey & { provider: LlmProvider; expiresAtMs: number })
-  | null = null;
+export function invalidateProviderCache(): void {
+  cachedProvider = null;
+}
 
 function maskKey(raw: string): string {
   const value = raw.trim();
@@ -49,100 +38,204 @@ function maskKey(raw: string): string {
   return `...${value.slice(-4)}`;
 }
 
-async function resolveApiKey(provider: LlmProvider): Promise<ResolvedKey> {
-  const now = Date.now();
-  if (
-    cachedKey &&
-    cachedKey.provider === provider &&
-    cachedKey.expiresAtMs > now
-  ) {
-    return { keyId: cachedKey.keyId, apiKey: cachedKey.apiKey };
+async function loadFromDb(): Promise<ResolvedProvider | null> {
+  const [row] = await db
+    .select()
+    .from(llmProviders)
+    .where(eq(llmProviders.isActive, true))
+    .limit(1);
+  if (!row) return null;
+  try {
+    const apiKey = decryptSecret(row.encryptedApiKey, row.iv, row.authTag);
+    return {
+      id: row.id,
+      source: "db",
+      name: row.name,
+      baseUrl: row.baseUrl,
+      apiKey,
+      defaultModel: row.defaultModel,
+      advancedModel: row.advancedModel,
+    };
+  } catch (error) {
+    console.warn(
+      `[LLM] Failed to decrypt provider row id=${row.id}: ${String(error)}. Falling back to env.`,
+    );
+    return null;
   }
+}
 
-  const dbService = PROVIDERS[provider].dbServiceName;
-
-  // Prefer latest key stored in database (encrypted).
+async function loadLegacyApiKeyFromDb(
+  service: string,
+): Promise<{ apiKey: string; id: number } | null> {
   const latest = await db.query.apiKeys.findFirst({
-    where: eq(apiKeys.service, dbService),
+    where: eq(apiKeys.service, service),
     orderBy: desc(apiKeys.createdAt),
   });
-
-  if (latest?.encryptedKey && latest.iv && latest.authTag) {
-    try {
-      const apiKey = decryptSecret(latest.encryptedKey, latest.iv, latest.authTag);
-      cachedKey = {
-        provider,
-        keyId: latest.id,
-        apiKey,
-        // Short TTL so new keys in Settings are picked up quickly.
-        expiresAtMs: now + 60_000,
-      };
-      return { keyId: latest.id, apiKey };
-    } catch (error) {
-      console.warn(
-        `[LLM] Failed to decrypt ${dbService} API key from database; falling back to env. ${String(
-          error,
-        )}`,
-      );
-    }
-  }
-
-  // Fallback to env vars (legacy / local dev).
-  const envKey = provider === "openai" ? env.OPENAI_API_KEY : env.MOONSHOT_API_KEY;
-  if (envKey) {
-    cachedKey = {
-      provider,
-      keyId: null,
-      apiKey: envKey,
-      expiresAtMs: now + 60_000,
+  if (!latest?.encryptedKey || !latest.iv || !latest.authTag) return null;
+  try {
+    return {
+      apiKey: decryptSecret(latest.encryptedKey, latest.iv, latest.authTag),
+      id: latest.id,
     };
-    return { keyId: null, apiKey: envKey };
+  } catch (error) {
+    console.warn(
+      `[LLM] Failed to decrypt legacy api_keys row for service=${service}: ${String(error)}`,
+    );
+    return null;
   }
-
-  const envVarName = provider === "openai" ? "OPENAI_API_KEY" : "MOONSHOT_API_KEY";
-  throw new Error(
-    `[LLM] API key is not configured for provider=${provider}. Set ${envVarName} or save an encrypted key via Settings (service='${dbService}').`,
-  );
 }
 
-function createClient(provider: LlmProvider, apiKey: string): OpenAI {
-  const baseURL = PROVIDERS[provider].baseURL;
+async function loadFromEnv(): Promise<ResolvedProvider | null> {
+  const provider: LegacyLlmProvider = env.LLM_PROVIDER;
+
+  // Legacy behaviour: api_keys table (service='openai'|'moonshot') still wins
+  // over env vars. Keeps the pre-existing migration path working.
+  const legacy = await loadLegacyApiKeyFromDb(provider);
+  if (legacy) {
+    if (provider === "openai") {
+      return {
+        id: null,
+        source: "env",
+        name: "OpenAI (legacy)",
+        baseUrl: null,
+        apiKey: legacy.apiKey,
+        defaultModel: env.OPENAI_DEFAULT_MODEL,
+        advancedModel: env.OPENAI_ADVANCED_MODEL,
+      };
+    }
+    return {
+      id: null,
+      source: "env",
+      name: "Moonshot (legacy)",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKey: legacy.apiKey,
+      defaultModel: env.MOONSHOT_DEFAULT_MODEL,
+      advancedModel: env.MOONSHOT_ADVANCED_MODEL,
+    };
+  }
+
+  if (provider === "openai" && env.OPENAI_API_KEY) {
+    return {
+      id: null,
+      source: "env",
+      name: "OpenAI (env)",
+      baseUrl: null,
+      apiKey: env.OPENAI_API_KEY,
+      defaultModel: env.OPENAI_DEFAULT_MODEL,
+      advancedModel: env.OPENAI_ADVANCED_MODEL,
+    };
+  }
+  if (provider === "moonshot" && env.MOONSHOT_API_KEY) {
+    return {
+      id: null,
+      source: "env",
+      name: "Moonshot (env)",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKey: env.MOONSHOT_API_KEY,
+      defaultModel: env.MOONSHOT_DEFAULT_MODEL,
+      advancedModel: env.MOONSHOT_ADVANCED_MODEL,
+    };
+  }
+  return null;
+}
+
+export async function resolveActiveProvider(): Promise<ResolvedProvider> {
+  const now = Date.now();
+  if (cachedProvider && cachedProvider.expiresAtMs > now) {
+    return cachedProvider;
+  }
+
+  const dbProvider = await loadFromDb();
+  const resolved = dbProvider ?? (await loadFromEnv());
+  if (!resolved) {
+    throw new Error(
+      "[LLM] No active LLM provider configured. Add one at Settings → LLM Providers, or set LLM_PROVIDER + *_API_KEY env vars.",
+    );
+  }
+
+  cachedProvider = { ...resolved, expiresAtMs: now + CACHE_TTL_MS };
+  return resolved;
+}
+
+function createClient(provider: ResolvedProvider): OpenAI {
   return new OpenAI({
-    apiKey,
-    ...(baseURL ? { baseURL } : {}),
+    apiKey: provider.apiKey,
+    ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
   });
 }
 
-export async function llmChatCompletionsCreate(
-  params: any,
-): Promise<any> {
-  const provider = LLM_PROVIDER;
-  const { keyId, apiKey } = await resolveApiKey(provider);
-  const client = createClient(provider, apiKey);
+export async function llmChatCompletionsCreate(params: any): Promise<any> {
+  const provider = await resolveActiveProvider();
 
+  // Resolve model sentinels to concrete names from the active provider.
+  const rawModel = params?.model;
+  let model = rawModel;
+  if (rawModel === DEFAULT_MODEL) model = provider.defaultModel;
+  else if (rawModel === ADVANCED_MODEL) model = provider.advancedModel;
+
+  const client = createClient(provider);
   const response = await client.chat.completions.create({
     stream: false,
     ...params,
+    model,
   });
 
-  if (keyId) {
-    try {
-      await db
-        .update(apiKeys)
-        .set({ lastUsedAt: new Date() })
-        .where(eq(apiKeys.id, keyId));
-    } catch (error) {
-      console.warn(
-        `[LLM] Failed to update last_used_at for keyId=${keyId}: ${String(error)}`,
-      );
-    }
+  // Best-effort last_used_at updates (non-blocking).
+  if (provider.source === "db" && provider.id != null) {
+    const providerId = provider.id;
+    void (async () => {
+      try {
+        await db
+          .update(llmProviders)
+          .set({ lastUsedAt: new Date() })
+          .where(eq(llmProviders.id, providerId));
+      } catch (error) {
+        console.warn(
+          `[LLM] Failed to update last_used_at for llm_providers.id=${providerId}: ${String(error)}`,
+        );
+      }
+    })();
   } else {
-    // Best-effort log to help debugging env-based configuration.
     console.log(
-      `[LLM] Using env-based key (${provider}, ${maskKey(apiKey)}).`,
+      `[LLM] Using env-based key (${provider.name}, ${maskKey(provider.apiKey)}).`,
     );
   }
 
   return response;
 }
 
+/**
+ * Ephemeral test call used by the Settings UI "Test" button. Does NOT touch
+ * the resolved-provider cache or update last_used_at.
+ */
+export async function testProviderConnection(input: {
+  baseUrl: string | null;
+  apiKey: string;
+  defaultModel: string;
+}): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+  const started = Date.now();
+  try {
+    const client = new OpenAI({
+      apiKey: input.apiKey,
+      ...(input.baseUrl ? { baseURL: input.baseUrl } : {}),
+    });
+    await client.chat.completions.create({
+      model: input.defaultModel,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 5,
+      temperature: 0,
+      stream: false,
+    });
+    return { ok: true, latencyMs: Date.now() - started };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - started,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+// Kept as a compatibility shim for any legacy code/tests that read
+// `LLM_PROVIDER` directly. The real truth is in the DB resolver above.
+export const LLM_PROVIDER: LegacyLlmProvider = env.LLM_PROVIDER;

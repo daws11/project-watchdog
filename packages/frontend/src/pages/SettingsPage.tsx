@@ -4,6 +4,9 @@ import { SettingsView } from '../components/settings'
 import type {
   ApiKey,
   ApiKeyFormData,
+  LlmProvider,
+  LlmProviderCreate,
+  LlmProviderUpdate,
   PersonOption,
   SectionOption,
   SmtpSettings,
@@ -18,6 +21,7 @@ interface SettingsDataBase {
   users: SystemUser[]
   availableSections: SectionOption[]
   availablePeople: PersonOption[]
+  llmProviders: LlmProvider[]
 }
 
 interface SettingsData extends SettingsDataBase {
@@ -152,6 +156,60 @@ export default function SettingsPage() {
         availableSections={data.availableSections}
         availablePeople={data.availablePeople}
         whatsappWebStatus={data.whatsappWebStatus}
+        llmProviders={data.llmProviders ?? []}
+        onCreateLlmProvider={(payload: LlmProviderCreate) =>
+          mutate(() =>
+            apiFetch('/api/settings/llm-providers', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            }),
+          )
+        }
+        onUpdateLlmProvider={(id: number, payload: LlmProviderUpdate) =>
+          mutate(() =>
+            apiFetch(`/api/settings/llm-providers/${id}`, {
+              method: 'PUT',
+              body: JSON.stringify(payload),
+            }),
+          )
+        }
+        onDeleteLlmProvider={(id: number) =>
+          mutate(() =>
+            apiFetch(`/api/settings/llm-providers/${id}`, {
+              method: 'DELETE',
+            }),
+          )
+        }
+        onActivateLlmProvider={(id: number) =>
+          mutate(() =>
+            apiFetch(`/api/settings/llm-providers/${id}/activate`, {
+              method: 'POST',
+            }),
+          )
+        }
+        onTestLlmProvider={async (id: number) => {
+          try {
+            setNotice({ type: 'info', message: 'Testing LLM provider…' })
+            const result = await apiFetch<{ ok: boolean; latencyMs: number; error?: string }>(
+              `/api/settings/llm-providers/${id}/test`,
+              { method: 'POST' },
+            )
+            setNotice({
+              type: result.ok ? 'success' : 'error',
+              message: result.ok
+                ? `LLM provider OK (${result.latencyMs}ms).`
+                : `LLM test failed: ${result.error ?? 'unknown error'}`,
+            })
+            await refresh()
+            return result
+          } catch (err) {
+            const message = (err as Error).message
+            setNotice({ type: 'error', message: `LLM test failed: ${message}` })
+            return { ok: false, latencyMs: 0, error: message }
+          } finally {
+            clearNoticeSoon()
+          }
+        }}
         onAddApiKey={(payload: ApiKeyFormData) =>
           mutate(() =>
             apiFetch('/api/settings/api-keys', {

@@ -1,19 +1,25 @@
 import { Router } from "express";
 import bcrypt from "bcrypt";
 import nodemailer from "nodemailer";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, ne, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db";
 import {
   apiKeys,
+  llmProviders,
   smtpSettings as smtpSettingsTable,
   tasks,
   users,
 } from "../db/schema";
-import { encryptSecret } from "../utils/crypto";
+import { decryptSecret, encryptSecret } from "../utils/crypto";
 import {
   enqueueWhatsappWebCommand,
   getWhatsappWebStatusView,
 } from "../services/whatsapp-web-ingestor";
+import {
+  invalidateProviderCache,
+  testProviderConnection,
+} from "../services/llm";
 
 type UserRole = "admin" | "regular";
 type UserStatus = "active" | "inactive";
@@ -57,12 +63,29 @@ interface PersonOption {
   name: string;
 }
 
+interface LlmProviderView {
+  id: number;
+  name: string;
+  baseUrl: string | null;
+  maskedKey: string;
+  defaultModel: string;
+  advancedModel: string;
+  isActive: boolean;
+  lastUsedAt: string | null;
+  lastTestAt: string | null;
+  lastTestOk: boolean | null;
+  lastTestError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface SettingsSnapshot {
   apiKeys: ApiKey[];
   smtpSettings: SmtpSettings;
   users: SystemUser[];
   availableSections: SectionOption[];
   availablePeople: PersonOption[];
+  llmProviders: LlmProviderView[];
 }
 
 interface WhatsappWebSettingsStatus {
@@ -105,6 +128,50 @@ const availableSections: SectionOption[] = [
   { id: "settings", label: "Settings" },
   { id: "reports", label: "Reports" },
 ];
+
+function toLlmProviderView(
+  row: typeof llmProviders.$inferSelect,
+): LlmProviderView {
+  return {
+    id: row.id,
+    name: row.name,
+    baseUrl: row.baseUrl,
+    maskedKey: row.maskedKey,
+    defaultModel: row.defaultModel,
+    advancedModel: row.advancedModel,
+    isActive: row.isActive,
+    lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
+    lastTestAt: row.lastTestAt?.toISOString() ?? null,
+    lastTestOk: row.lastTestOk,
+    lastTestError: row.lastTestError,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function listLlmProviders(): Promise<LlmProviderView[]> {
+  const rows = await db
+    .select()
+    .from(llmProviders)
+    .orderBy(desc(llmProviders.isActive), desc(llmProviders.updatedAt));
+  return rows.map(toLlmProviderView);
+}
+
+const LlmProviderCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  baseUrl: z.string().trim().url().nullable().optional(),
+  apiKey: z.string().trim().min(10),
+  defaultModel: z.string().trim().min(1),
+  advancedModel: z.string().trim().min(1),
+});
+
+const LlmProviderUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  baseUrl: z.string().trim().url().nullable().optional(),
+  apiKey: z.string().trim().min(10).optional(),
+  defaultModel: z.string().trim().min(1).optional(),
+  advancedModel: z.string().trim().min(1).optional(),
+});
 
 function maskKey(raw: string): string {
   const key = raw.trim();
@@ -186,12 +253,15 @@ router.get("/", async (_req, res) => {
       name: p.owner || "Unknown",
     }));
 
+    const llmProvidersList = await listLlmProviders();
+
     const snapshot: SettingsSnapshot = {
       apiKeys: formattedApiKeys,
       smtpSettings,
       users: formattedUsers,
       availableSections,
       availablePeople,
+      llmProviders: llmProvidersList,
     };
 
     res.json(snapshot);
@@ -558,6 +628,208 @@ router.post("/users/:userId/reactivate", async (req, res) => {
   } catch (error) {
     console.error("[Settings] Error reactivating user:", error);
     res.status(500).json({ error: "Failed to reactivate user" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM Providers
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/settings/llm-providers — list providers (no plaintext secrets)
+router.get("/llm-providers", async (_req, res) => {
+  try {
+    const providers = await listLlmProviders();
+    res.json({ providers });
+  } catch (error) {
+    console.error("[Settings] Error listing LLM providers:", error);
+    res.status(500).json({ error: "Failed to list LLM providers" });
+  }
+});
+
+// POST /api/settings/llm-providers — create provider
+router.post("/llm-providers", async (req, res) => {
+  try {
+    const parsed = LlmProviderCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    const input = parsed.data;
+
+    const enc = encryptSecret(input.apiKey);
+    const [row] = await db
+      .insert(llmProviders)
+      .values({
+        name: input.name,
+        baseUrl: input.baseUrl ?? null,
+        encryptedApiKey: enc.encryptedValue,
+        iv: enc.iv,
+        authTag: enc.authTag,
+        maskedKey: maskKey(input.apiKey),
+        defaultModel: input.defaultModel,
+        advancedModel: input.advancedModel,
+        isActive: false,
+      })
+      .returning();
+
+    invalidateProviderCache();
+    res.status(201).json({ provider: toLlmProviderView(row) });
+  } catch (error) {
+    console.error("[Settings] Error creating LLM provider:", error);
+    res.status(500).json({ error: "Failed to create LLM provider" });
+  }
+});
+
+// PUT /api/settings/llm-providers/:id — update provider (apiKey optional)
+router.put("/llm-providers/:id", async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid provider id" });
+    }
+    const parsed = LlmProviderUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    const input = parsed.data;
+
+    const updates: Partial<typeof llmProviders.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.baseUrl !== undefined) updates.baseUrl = input.baseUrl;
+    if (input.defaultModel !== undefined)
+      updates.defaultModel = input.defaultModel;
+    if (input.advancedModel !== undefined)
+      updates.advancedModel = input.advancedModel;
+    if (input.apiKey) {
+      const enc = encryptSecret(input.apiKey);
+      updates.encryptedApiKey = enc.encryptedValue;
+      updates.iv = enc.iv;
+      updates.authTag = enc.authTag;
+      updates.maskedKey = maskKey(input.apiKey);
+    }
+
+    const [row] = await db
+      .update(llmProviders)
+      .set(updates)
+      .where(eq(llmProviders.id, id))
+      .returning();
+    if (!row) {
+      return res.status(404).json({ error: "Provider not found" });
+    }
+    invalidateProviderCache();
+    res.json({ provider: toLlmProviderView(row) });
+  } catch (error) {
+    console.error("[Settings] Error updating LLM provider:", error);
+    res.status(500).json({ error: "Failed to update LLM provider" });
+  }
+});
+
+// DELETE /api/settings/llm-providers/:id — delete provider
+router.delete("/llm-providers/:id", async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid provider id" });
+    }
+    const deleted = await db
+      .delete(llmProviders)
+      .where(eq(llmProviders.id, id))
+      .returning();
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: "Provider not found" });
+    }
+    invalidateProviderCache();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Settings] Error deleting LLM provider:", error);
+    res.status(500).json({ error: "Failed to delete LLM provider" });
+  }
+});
+
+// POST /api/settings/llm-providers/:id/activate — mark provider active (others inactive)
+router.post("/llm-providers/:id/activate", async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid provider id" });
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(llmProviders)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(ne(llmProviders.id, id));
+      await tx
+        .update(llmProviders)
+        .set({ isActive: true, updatedAt: new Date() })
+        .where(eq(llmProviders.id, id));
+    });
+
+    const [row] = await db
+      .select()
+      .from(llmProviders)
+      .where(eq(llmProviders.id, id));
+    if (!row) {
+      return res.status(404).json({ error: "Provider not found" });
+    }
+    invalidateProviderCache();
+    res.json({ provider: toLlmProviderView(row) });
+  } catch (error) {
+    console.error("[Settings] Error activating LLM provider:", error);
+    res.status(500).json({ error: "Failed to activate LLM provider" });
+  }
+});
+
+// POST /api/settings/llm-providers/:id/test — ephemeral test call
+router.post("/llm-providers/:id/test", async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid provider id" });
+    }
+
+    const [row] = await db
+      .select()
+      .from(llmProviders)
+      .where(eq(llmProviders.id, id));
+    if (!row) {
+      return res.status(404).json({ error: "Provider not found" });
+    }
+
+    let apiKey: string;
+    try {
+      apiKey = decryptSecret(row.encryptedApiKey, row.iv, row.authTag);
+    } catch (error) {
+      return res
+        .status(500)
+        .json({ error: `Failed to decrypt stored key: ${String(error)}` });
+    }
+
+    const result = await testProviderConnection({
+      baseUrl: row.baseUrl,
+      apiKey,
+      defaultModel: row.defaultModel,
+    });
+
+    await db
+      .update(llmProviders)
+      .set({
+        lastTestAt: new Date(),
+        lastTestOk: result.ok,
+        lastTestError: result.ok ? null : result.error ?? "unknown error",
+        updatedAt: new Date(),
+      })
+      .where(eq(llmProviders.id, id));
+
+    res.json(result);
+  } catch (error) {
+    console.error("[Settings] Error testing LLM provider:", error);
+    res.status(500).json({ error: "Failed to test LLM provider" });
   }
 });
 

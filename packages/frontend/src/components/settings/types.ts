@@ -10,7 +10,42 @@ export type UserStatus = 'active' | 'inactive'
 export type SmtpEncryption = 'none' | 'ssl' | 'starttls'
 
 /** Settings category for sidebar navigation */
-export type SettingsCategory = 'api_keys' | 'smtp' | 'users' | 'whatsapp_web'
+export type SettingsCategory = 'api_keys' | 'llm_providers' | 'smtp' | 'users' | 'whatsapp_web'
+
+/** A configured LLM provider (OpenAI Chat Completions compatible) */
+export interface LlmProvider {
+  id: number
+  name: string
+  baseUrl: string | null
+  maskedKey: string
+  defaultModel: string
+  advancedModel: string
+  isActive: boolean
+  lastUsedAt: string | null
+  lastTestAt: string | null
+  lastTestOk: boolean | null
+  lastTestError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** Data for creating an LLM provider */
+export interface LlmProviderCreate {
+  name: string
+  baseUrl: string | null
+  apiKey: string
+  defaultModel: string
+  advancedModel: string
+}
+
+/** Data for updating an LLM provider (apiKey optional = keep existing) */
+export interface LlmProviderUpdate {
+  name?: string
+  baseUrl?: string | null
+  apiKey?: string
+  defaultModel?: string
+  advancedModel?: string
+}
 
 /** A configured API key for an external service */
 export interface ApiKey {
@@ -95,6 +130,23 @@ export interface SettingsProps {
   availableSections: SectionOption[]
   availablePeople: PersonOption[]
   whatsappWebStatus: WhatsappWebStatus
+  llmProviders: LlmProvider[]
+
+  /** Called when admin creates a new LLM provider */
+  onCreateLlmProvider?: (data: LlmProviderCreate) => Promise<void> | void
+
+  /** Called when admin updates an LLM provider */
+  onUpdateLlmProvider?: (id: number, data: LlmProviderUpdate) => Promise<void> | void
+
+  /** Called when admin deletes an LLM provider */
+  onDeleteLlmProvider?: (id: number) => Promise<void> | void
+
+  /** Called when admin activates a specific LLM provider */
+  onActivateLlmProvider?: (id: number) => Promise<void> | void
+
+  /** Called when admin tests a specific LLM provider */
+  onTestLlmProvider?: (id: number) => Promise<{ ok: boolean; latencyMs: number; error?: string }>
+
 
   /** Called when user adds a new API key */
   onAddApiKey?: (data: ApiKeyFormData) => void
