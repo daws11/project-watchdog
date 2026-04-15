@@ -15,6 +15,7 @@ import ProjectsPage from "./pages/ProjectsPage";
 import SourcesPage from "./pages/SourcesPage";
 import ProcessingPage from "./pages/ProcessingPage";
 import SettingsPage from "./pages/SettingsPage";
+import WikiGraphPage from "./pages/WikiGraphPage";
 import LoginPage from "./pages/LoginPage";
 import { apiFetch } from "./api/client";
 
@@ -39,6 +40,7 @@ const SECTION_BY_PATH: Record<string, string> = {
   "/projects": "tasks",
   "/sources": "sources",
   "/processing": "processing",
+  "/wiki-graph": "wiki",
   "/settings": "settings",
   "/health": "health",
 };
@@ -50,6 +52,7 @@ const NAV_ORDER = [
   "/projects",
   "/sources",
   "/processing",
+  "/wiki-graph",
   "/settings",
   "/health",
 ];
@@ -165,6 +168,10 @@ export default function App() {
                 <Route
                   path="/processing"
                   element={canAccess("processing") ? <ProcessingPage /> : <Navigate to={fallbackPath} replace />}
+                />
+                <Route
+                  path="/wiki-graph"
+                  element={canAccess("wiki") ? <WikiGraphPage /> : <Navigate to={fallbackPath} replace />}
                 />
                 <Route
                   path="/settings"

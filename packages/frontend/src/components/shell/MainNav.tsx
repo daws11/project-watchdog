@@ -5,6 +5,7 @@ import {
   FolderKanban,
   Inbox,
   Activity,
+  Network,
   Settings,
   type LucideIcon,
 } from 'lucide-react'
@@ -32,6 +33,7 @@ export const defaultNavigationItems: NavigationItem[] = [
   { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'Sources', href: '/sources', icon: Inbox },
   { label: 'Processing', href: '/processing', icon: Activity },
+  { label: 'Wiki Graph', href: '/wiki-graph', icon: Network },
 ]
 
 export const defaultBottomItems: NavigationItem[] = [
