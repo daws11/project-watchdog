@@ -11,6 +11,7 @@ async function ensureQueues(queue: PgBoss): Promise<void> {
     JobTypes.DETECT_RISKS,
     JobTypes.GENERATE_REPORT,
     JobTypes.RUN_PROCESSING_RULE,
+    JobTypes.WIKI_UPDATE,
     ...INFRA_QUEUES,
   ];
 

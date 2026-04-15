@@ -10,8 +10,15 @@ import {
   deadlineParsingGuidelines,
 } from "../prompts/task-extraction";
 import { getQueue } from "../queue";
-import { JobTypes, type ProcessBatchJob, type DetectRisksJob } from "../queue/jobs";
+import {
+  JobTypes,
+  type ProcessBatchJob,
+  type DetectRisksJob,
+  type WikiUpdateJob,
+} from "../queue/jobs";
 import { llmChatCompletionsCreate, DEFAULT_MODEL } from "../services/llm";
+import { env } from "../config/env";
+import { formatSectionsForPrompt, selectWikiSections } from "../services/wiki";
 import { enrichBatchContext } from "./context-enricher";
 import {
   findSimilarTask,
@@ -444,13 +451,31 @@ export async function registerTaskExtractor(): Promise<void> {
           };
         });
 
-        // 8. Call Kimi K2 for task extraction with rich context
+        // 8. (LLM Wiki) select relevant knowledge sections for this project.
+        // Rule-based selection: fetch active sections, prioritize by kind,
+        // greedy-pack to token budget. No-op when WIKI_ENABLED is false.
+        let wikiContext: string | null = null;
+        if (env.WIKI_ENABLED) {
+          try {
+            const sections = await selectWikiSections(projectId);
+            wikiContext = formatSectionsForPrompt(sections);
+            console.log(
+              `[TaskExtractor] Wiki injected: ${sections.length} sections selected for project ${projectId}`,
+            );
+          } catch (error) {
+            console.error("[TaskExtractor] Wiki selection failed:", error);
+            wikiContext = null;
+          }
+        }
+
+        // 9. Call LLM for task extraction with rich context (incl. wiki)
         const userPrompt = buildRichTaskExtractionPrompt(
           projectContext,
           connectionContext,
           peopleContext,
           existingTaskDescriptions,
           formattedMessages,
+          wikiContext,
         );
 
         const fullSystemPrompt = taskExtractionSystemPrompt + deadlineParsingGuidelines;
@@ -490,6 +515,7 @@ export async function registerTaskExtractor(): Promise<void> {
         let createdCount = 0;
         let updatedCount = 0;
         let mergeSuggestionCount = 0;
+        const newTaskIds: number[] = [];
 
         for (const task of filteredTasks) {
           // Parse deadline using natural language parser
@@ -565,17 +591,21 @@ export async function registerTaskExtractor(): Promise<void> {
           }
 
           // Insert new task
-          await db.insert(tasks).values({
-            projectId,
-            messageId: messageBatch[0]?.id, // Link to first message in batch
-            description: task.description,
-            owner: task.assignee,
-            deadline,
-            status: "open",
-            confidence: task.confidence,
-            similarityHash: generateSimilarityHash(task.description),
-          });
+          const [insertedTask] = await db
+            .insert(tasks)
+            .values({
+              projectId,
+              messageId: messageBatch[0]?.id, // Link to first message in batch
+              description: task.description,
+              owner: task.assignee,
+              deadline,
+              status: "open",
+              confidence: task.confidence,
+              similarityHash: generateSimilarityHash(task.description),
+            })
+            .returning({ id: tasks.id });
 
+          if (insertedTask) newTaskIds.push(insertedTask.id);
           createdCount++;
           console.log(
             `[TaskExtractor] Created task: ${task.description.slice(0, 50)}... (confidence: ${task.confidence}, deadline: ${deadline?.toISOString() || "none"})`,
@@ -595,6 +625,23 @@ export async function registerTaskExtractor(): Promise<void> {
         // 10. Enqueue risk detection job
         const riskJob: DetectRisksJob = { projectId };
         await queue.send(JobTypes.DETECT_RISKS, riskJob);
+
+        // 10b. Enqueue wiki update job (LLM Wiki Phase 1).
+        // Runs async after task extraction — failures here do NOT block
+        // task persistence.
+        if (env.WIKI_ENABLED) {
+          const wikiJob: WikiUpdateJob = {
+            projectId,
+            connectionId: connectionId ?? null,
+            messageIds,
+            newTaskIds,
+          };
+          try {
+            await queue.send(JobTypes.WIKI_UPDATE, wikiJob);
+          } catch (error) {
+            console.error("[TaskExtractor] Failed to enqueue WIKI_UPDATE:", error);
+          }
+        }
 
         // 11. Trigger context enrichment (async, non-blocking)
         const enrichmentMessages = messageBatch.map((m) => ({

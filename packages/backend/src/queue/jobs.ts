@@ -5,6 +5,7 @@ export const JobTypes = {
   DETECT_RISKS: "detect-risks",
   GENERATE_REPORT: "generate-report",
   RUN_PROCESSING_RULE: "run-processing-rule",
+  WIKI_UPDATE: "wiki-update",
 } as const;
 
 export interface ProcessBatchJob {
@@ -26,4 +27,11 @@ export interface GenerateReportJob {
 export interface RunProcessingRuleJob {
   ruleId: number;
   runId: number;
+}
+
+export interface WikiUpdateJob {
+  projectId: number;
+  connectionId: number | null;
+  messageIds: number[];
+  newTaskIds: number[];
 }

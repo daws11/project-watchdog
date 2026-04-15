@@ -22,6 +22,14 @@ const envSchema = z.object({
   WHATSAPP_INGEST_TOKEN: z.string().optional().default(""),
   JWT_SECRET: z.string().optional().default(""),
   ENCRYPTION_KEY: z.string().optional().default(""),
+  // LLM Wiki (Phase 1 - rule-based selection, no embedding)
+  WIKI_ENABLED: z.coerce.boolean().default(false),
+  WIKI_MAX_TOKENS: z.coerce.number().int().positive().default(1500),
+  WIKI_AUTOEDIT_CONFIDENCE_THRESHOLD: z.coerce
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.8),
 });
 
 const parsedEnv = envSchema.parse(process.env);

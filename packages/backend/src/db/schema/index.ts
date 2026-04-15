@@ -4,6 +4,8 @@ export * from "./messages";
 export * from "./people_settings";
 export * from "./processing_rules";
 export * from "./processing_runs";
+export * from "./project_wiki_revisions";
+export * from "./project_wiki_sections";
 export * from "./projects";
 export * from "./reports";
 export * from "./risks";

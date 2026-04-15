@@ -7,6 +7,7 @@ import { registerProcessingRunner } from "./workers/processing-runner";
 import { registerTaskExtractor } from "./workers/task-extractor";
 import { registerRiskEngine } from "./workers/risk-engine";
 import { registerReportGenerator } from "./workers/report-generator";
+import { registerWikiUpdater } from "./workers/wiki-updater";
 import { authenticate, authorizeSection, requireAdmin } from "./middleware/auth";
 import { validateIngestToken } from "./middleware/webhook-auth";
 import { requestLogger } from "./middleware/request-logger";
@@ -20,6 +21,7 @@ import { reportsRouter } from "./routes/reports";
 import { settingsRouter } from "./routes/settings";
 import { sourcesRouter } from "./routes/sources";
 import { tasksRouter } from "./routes/tasks";
+import { wikiRouter } from "./routes/wiki";
 import { whatsappWebIngestRouter } from "./ingest/whatsapp-web";
 
 const app = express();
@@ -49,6 +51,7 @@ app.use("/api/reports", authenticate, authorizeSection("reports"), reportsRouter
 
 // Admin-only routes
 app.use("/api/settings", authenticate, requireAdmin, settingsRouter);
+app.use("/api/wiki", authenticate, requireAdmin, wikiRouter);
 
 // Development-only test routes
 if (env.NODE_ENV === "development" || env.NODE_ENV === "test") {
@@ -73,6 +76,7 @@ async function startServer() {
     await registerTaskExtractor();
     await registerRiskEngine();
     await registerReportGenerator();
+    await registerWikiUpdater();
     console.log("[Server] Workers registered");
 
     // Start Express server

@@ -219,6 +219,7 @@ export function buildRichTaskExtractionPrompt(
   people: EnrichedPersonContext[],
   existingTasks: string[],
   messages: Array<{ sender: string; text: string; timestamp: Date }>,
+  wikiContext: string | null = null,
 ): string {
   const formattedMessages = messages
     .map((m) => {
@@ -278,7 +279,15 @@ export function buildRichTaskExtractionPrompt(
       ? `\n\nExisting open tasks:\n${existingTasks.map((t, i) => `${i + 1}. ${t}`).join("\n")}`
       : "";
 
-  return `Project: ${project.name}${projectContextText}${connectionContextText}${peopleContextText}${existingTasksText}
+  // Build wiki knowledge section (LLM Wiki integration, Phase 1).
+  // Placed after people context and before existing tasks so the LLM reads
+  // domain knowledge first, then the operational state.
+  const wikiContextText =
+    wikiContext && wikiContext.trim().length > 0
+      ? `\n\nProject Knowledge (from wiki):\n${wikiContext}`
+      : "";
+
+  return `Project: ${project.name}${projectContextText}${connectionContextText}${peopleContextText}${wikiContextText}${existingTasksText}
 
 Recent messages:
 ${formattedMessages}
